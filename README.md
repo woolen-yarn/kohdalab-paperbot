@@ -5,8 +5,8 @@ Slack DMからMac上のPDF RAGを呼び、RTX PCのOllamaで回答する最小�
 GitHub:
 
 ```text
-origin   https://github.com/woolen-yarn/kohdalab-paperbot
-personal https://github.com/woolen-yarn/kohdalab-paperbot
+origin   https://github.com/woolen-yarn/kohdalab-paperbot      private
+personal https://github.com/woolen-yarn/kohdalab-paperbot   public
 ```
 
 ```text
