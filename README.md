@@ -111,11 +111,16 @@ For GitHub + DS920+ workflow, use:
 
 [docs/GIT_WORKFLOW.md](docs/GIT_WORKFLOW.md)
 
+For Portainer-only deployment, use:
+
+[docs/PORTAINER_DEPLOY.md](docs/PORTAINER_DEPLOY.md)
+
 Deployment files:
 
 ```text
 Dockerfile
 docker-compose.nas.yml
+docker-compose.portainer.yml
 .dockerignore
 requirements.txt
 scripts/deploy_nas.sh
