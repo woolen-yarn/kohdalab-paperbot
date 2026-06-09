@@ -1,0 +1,5 @@
+.venv/
+index/
+papers/*.pdf
+__pycache__/
+*.pyc

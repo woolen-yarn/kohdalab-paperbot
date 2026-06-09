@@ -1,0 +1,40 @@
+services:
+  paperbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kohdalab-paperbot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./rag_poc/papers:/app/rag_poc/papers
+      - ./rag_poc/index:/app/rag_poc/index
+      - ./logs:/app/logs
+    command: ["python", "bot.py"]
+
+  ingest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["tools"]
+    env_file:
+      - .env
+    volumes:
+      - ./rag_poc/papers:/app/rag_poc/papers
+      - ./rag_poc/index:/app/rag_poc/index
+      - ./logs:/app/logs
+    command: ["python", "rag_poc/ingest.py"]
+
+  ask:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["tools"]
+    env_file:
+      - .env
+    volumes:
+      - ./rag_poc/papers:/app/rag_poc/papers
+      - ./rag_poc/index:/app/rag_poc/index
+      - ./logs:/app/logs
+    command: ["python", "rag_poc/ask.py", "${Q:-Persistent Spin Helixに関係する内容を教えて}"]

@@ -1,0 +1,4 @@
+pymupdf>=1.27.2.3
+slack-bolt>=1.28.0
+slack-sdk>=3.42.0
+websocket-client>=1.9.0

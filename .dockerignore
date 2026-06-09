@@ -1,0 +1,9 @@
+.git/
+.venv/
+__pycache__/
+*.pyc
+.env
+logs/
+rag_poc/index/
+rag_poc/papers/*.pdf
+rag_poc/__pycache__/
