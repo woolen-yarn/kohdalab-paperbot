@@ -141,6 +141,26 @@ ollama pull qwen3:8b
 ollama pull nomic-embed-text
 ```
 
+## Benchmark Ollama Models
+
+Measure generation speed for candidate chat models:
+
+```bash
+cd /Users/example/projects/llm
+make bench MODELS="qwen3:8b gemma4:12b gpt-oss:20b"
+```
+
+The benchmark reports Ollama's `eval_count / eval_duration` as generation tokens/sec.
+
+Direct usage:
+
+```bash
+uv run python scripts/benchmark_ollama_models.py \
+  --base-url http://rtx-pc.example.invalid:11434 \
+  --models qwen3:8b gemma4:12b gpt-oss:20b \
+  --runs 2
+```
+
 ## Notes
 
 - This is the MVP. It intentionally uses a local JSONL index instead of Postgres/pgvector.
