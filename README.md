@@ -67,6 +67,19 @@ Persistent Spin Helixに関係する内容を教えて
 
 The bot should reply with an answer and `Sources` such as `S1`, `S2`, etc.
 
+## Slack Commands
+
+PaperBot understands these commands in DM or mention replies:
+
+```text
+/help      Show available commands
+/model     Show current Ollama chat/embedding model settings
+/sources   Show sources from your previous answer in the same DM/channel
+/recent    Show recent PDFs on the local papers volume
+```
+
+If Slack intercepts slash-style text, send the command without `/`, for example `model` or `sources`.
+
 ## Add Or Replace PDFs
 
 Put PDFs here:
@@ -99,7 +112,7 @@ Runtime logs are written here:
 /Users/kikuchikeito/projects/llm/logs/paperbot.log
 ```
 
-The log records Slack surface, user id, duration, question text, selected sources, and errors. It rotates automatically at about 5 MB.
+The log records Slack surface, user id, chat model, embedding model, duration, answer length, question text, selected sources, commands, and errors. It rotates automatically at about 5 MB.
 
 ## DS920+ Deployment
 
