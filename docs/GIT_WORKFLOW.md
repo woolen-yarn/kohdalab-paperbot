@@ -52,9 +52,44 @@ __pycache__/
 
 ## DS920+ 初回
 
+Private repoなので、DS920+からcloneするにはGitHub認証が必要です。
+おすすめは読み取り専用のSSH deploy keyです。
+
+DS920+にSSHで入り、鍵を作ります。
+
+```bash
+ssh-keygen -t ed25519 -C "ds920-paperbot" -f ~/.ssh/paperbot_deploy_key
+cat ~/.ssh/paperbot_deploy_key.pub
+```
+
+GitHub repoの `Settings` -> `Deploy keys` -> `Add deploy key` に公開鍵を追加します。
+`Allow write access` はOFFのままでOKです。
+
+DS920+のSSH設定に、この鍵を使う設定を追加します。
+
+```bash
+cat >> ~/.ssh/config <<'EOF'
+Host github.com-paperbot
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/paperbot_deploy_key
+  IdentitiesOnly yes
+EOF
+
+chmod 600 ~/.ssh/config ~/.ssh/paperbot_deploy_key
+```
+
+接続確認:
+
+```bash
+ssh -T github.com-paperbot
+```
+
+cloneします。
+
 ```bash
 cd /volume1/docker
-git clone https://github.com/woolen-yarn/kohdalab-paperbot.git paperbot
+git clone git@github.com-paperbot:woolen-yarn/kohdalab-paperbot.git paperbot
 cd paperbot
 cp .env.example .env
 ```
