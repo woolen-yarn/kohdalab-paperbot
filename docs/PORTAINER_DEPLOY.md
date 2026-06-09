@@ -7,6 +7,7 @@ Portainer Stack
   compose: docker-compose.stack-local.yml
   build context: /volume1/docker/paperbot
   env file: /volume1/docker/paperbot/.env
+  service: paperbot only
 
 DS920+ local repo
   /volume1/docker/paperbot
@@ -74,7 +75,9 @@ PAPERBOT_LOG_LEVEL=INFO
 
 ## 3. PDF/indexを置く
 
-Mac側からNASへコピーします。`NAS_IP` はDS920+のIPまたはホスト名に置き換えてください。
+最初は空のままでも構いません。PDFをGitHubへcommitしないため、PDFとindexはNASまたはMacのローカルにだけ置きます。
+
+必要になったら、Mac側からNASへコピーします。`NAS_IP` はDS920+のIPまたはホスト名に置き換えてください。
 
 ```bash
 rsync -av /Users/kikuchikeito/projects/llm/rag_poc/papers/ \
@@ -94,13 +97,17 @@ NASのSSHでPortainer container名を確認します。
 sudo docker ps --format 'table {{.Names}}\t{{.Image}}' | grep -i portainer
 ```
 
-例えばcontainer名が `portainer` なら:
+例えばcontainer名が `portainer` なら、mountを確認します。
 
 ```bash
-sudo docker exec -it portainer ls -la /volume1/docker/paperbot
+sudo docker inspect portainer --format '{{range .Mounts}}{{println .Source "->" .Destination}}{{end}}'
 ```
 
-ここでrepoの中身が見えればOKです。
+ここで次があればOKです。
+
+```text
+/volume1/docker -> /volume1/docker
+```
 
 見えない場合、Portainer containerに次のvolume mountを追加してください。
 
@@ -145,6 +152,9 @@ Deploy the stack
 このcomposeは以下を使います。
 
 ```text
+service:
+  paperbot
+
 build context:
   /volume1/docker/paperbot
 
@@ -199,11 +209,12 @@ Stacks
 
 PDF/indexを更新する場合は、PDFを追加してから `ingest` を実行します。
 
-PortainerのStack editorで一時的に `paperbot` ではなく `ingest` serviceを起動するより、SSHから次を実行する方が簡単です。
+`docker-compose.stack-local.yml` は本番Stack用なので、常時起動する `paperbot` serviceだけを入れています。
+index作成は、必要になってからMac側で実行してNASへコピーするか、NASのSSHで `docker-compose.nas.yml` を使います。
 
 ```bash
 cd /volume1/docker/paperbot
-sudo docker compose -f docker-compose.stack-local.yml run --rm ingest
+sudo docker compose -f docker-compose.nas.yml run --rm ingest
 ```
 
 その後、Portainerで `kohdalab-paperbot` をrestartします。
