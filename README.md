@@ -121,6 +121,7 @@ Deployment files:
 Dockerfile
 docker-compose.nas.yml
 docker-compose.portainer.yml
+docker-compose.stack-local.yml
 .dockerignore
 requirements.txt
 scripts/deploy_nas.sh

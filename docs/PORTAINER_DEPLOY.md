@@ -1,57 +1,52 @@
-# Portainer Deployment
+# Portainer Stack Deployment
 
-PaperBotは、DS920+上にrepoを置いて運用できます。
-
-おすすめは次の分担です。
+DS920+上にrepoを置き、そのrepoをbuild contextにして、最初からPortainer StackとしてPaperBotを作ります。
 
 ```text
+Portainer Stack
+  compose: docker-compose.stack-local.yml
+  build context: /volume1/docker/paperbot
+  env file: /volume1/docker/paperbot/.env
+
 DS920+ local repo
   /volume1/docker/paperbot
-  git pull
-  docker compose build/up
-
-Portainer
-  containerの起動状態確認
-  logs確認
-  restart/stop/start
-```
-
-PortainerのGit repository Stackは、NAS上にrepoを置かない場合の別案です。
-
-## 方針
-
-```text
-DS920+ host path
-  /volume1/docker/paperbot
-  /volume1/docker/paperbot/rag_poc/papers
-  /volume1/docker/paperbot/rag_poc/index
-  /volume1/docker/paperbot/logs
 
 RTX PC
   Ollama: http://10.32.145.143:11434
 ```
 
-`.env` はNAS上のrepoに置きますが、Gitにはcommitしません。
+この方式では、Slack tokenをPortainerのEnvironment variablesに入れません。
+NAS上の `/volume1/docker/paperbot/.env` だけを使います。
 
 ## 1. NASにrepoを置く
 
-DS920+のSSHで:
+DS920+へSSHで入ります。
+
+```bash
+ssh Kohdalab@NAS_IP
+```
+
+repoがまだ無い場合:
 
 ```bash
 cd /volume1/docker
 git clone git@github.com-paperbot:Kohdalab/kohdalab-paperbot.git paperbot
 cd /volume1/docker/paperbot
-
-mkdir -p /volume1/docker/paperbot/rag_poc/papers
-mkdir -p /volume1/docker/paperbot/rag_poc/index
-mkdir -p /volume1/docker/paperbot/logs
 ```
 
-既にclone済みなら:
+repoが既にある場合:
 
 ```bash
 cd /volume1/docker/paperbot
 git pull
+```
+
+必要フォルダを作ります。
+
+```bash
+mkdir -p rag_poc/papers
+mkdir -p rag_poc/index
+mkdir -p logs
 ```
 
 ## 2. `.env` を作る
@@ -75,9 +70,11 @@ PAPERBOT_MAX_PER_SOURCE=3
 PAPERBOT_LOG_LEVEL=INFO
 ```
 
+`.env` はGitにはcommitしません。
+
 ## 3. PDF/indexを置く
 
-MacからPDF/indexをコピーします。`NAS_IP` はDS920+のIPまたは名前に置き換えてください。
+Mac側からNASへコピーします。`NAS_IP` はDS920+のIPまたはホスト名に置き換えてください。
 
 ```bash
 rsync -av /Users/kikuchikeito/projects/llm/rag_poc/papers/ \
@@ -87,83 +84,80 @@ rsync -av /Users/kikuchikeito/projects/llm/rag_poc/index/ \
   Kohdalab@NAS_IP:/volume1/docker/paperbot/rag_poc/index/
 ```
 
-## 4. 起動
+## 4. Portainerがrepoを見えるか確認
 
-まずSSHから起動します。
+Portainer StackでNAS上のrepoをbuild contextにするには、Portainer containerから `/volume1/docker/paperbot` が見えている必要があります。
+
+NASのSSHでPortainer container名を確認します。
 
 ```bash
-cd /volume1/docker/paperbot
-sudo docker compose -f docker-compose.nas.yml up -d --build paperbot
+sudo docker ps --format 'table {{.Names}}\t{{.Image}}' | grep -i portainer
 ```
 
-これでPortainer側にも `kohdalab-paperbot` containerが表示されます。
+例えばcontainer名が `portainer` なら:
 
-Portainerでは:
+```bash
+sudo docker exec -it portainer ls -la /volume1/docker/paperbot
+```
+
+ここでrepoの中身が見えればOKです。
+
+見えない場合、Portainer containerに次のvolume mountを追加してください。
 
 ```text
-Containers
--> kohdalab-paperbot
--> Logs / Restart / Stop / Start
+Host path:
+  /volume1/docker
+
+Container path:
+  /volume1/docker
+
+Mode:
+  read-only でも可
 ```
 
-## 5. 更新
+Synology Container ManagerからPortainer containerを編集する場合は、Portainerを一度停止し、volumeに上記を追加して起動し直します。
 
-コード更新:
+## 5. PortainerでStackを作る
 
-```bash
-cd /volume1/docker/paperbot
-git pull
-sudo docker compose -f docker-compose.nas.yml up -d --build paperbot
-```
-
-PDF/index更新:
-
-```bash
-cd /volume1/docker/paperbot
-sudo docker compose -f docker-compose.nas.yml run --rm ingest
-sudo docker compose -f docker-compose.nas.yml restart paperbot
-```
-
-## 6. Portainerだけでdeployしたい場合
-
-PortainerだけでGitHubからdeployする場合は、Git repository Stackとしてdeployします。
+Portainer:
 
 ```text
 Stacks
 -> Add stack
 -> Name: paperbot
--> Build method: Repository
+-> Build method: Web editor
 ```
 
-簡単に試す場合はpublic mirror:
+Web editorに、`docker-compose.stack-local.yml` の中身を貼ります。
+
+NASのSSHで表示する場合:
+
+```bash
+cat /volume1/docker/paperbot/docker-compose.stack-local.yml
+```
+
+貼り付けたら:
 
 ```text
-Repository URL:
-  https://github.com/woolen-yarn/kohdalab-paperbot.git
-
-Repository reference:
-  refs/heads/master
-
-Compose path:
-  docker-compose.portainer.yml
+Deploy the stack
 ```
 
-Kohdalab private originを使う場合:
+このcomposeは以下を使います。
 
 ```text
-Repository URL:
-  git@github.com:Kohdalab/kohdalab-paperbot.git
+build context:
+  /volume1/docker/paperbot
 
-Repository reference:
-  refs/heads/master
+env file:
+  /volume1/docker/paperbot/.env
 
-Compose path:
-  docker-compose.portainer.yml
+volumes:
+  /volume1/docker/paperbot/rag_poc/papers
+  /volume1/docker/paperbot/rag_poc/index
+  /volume1/docker/paperbot/logs
 ```
 
-private originの場合は、Portainer側にGit authentication/SSH keyを設定してください。
-
-## 7. 確認
+## 6. 確認
 
 Portainer:
 
@@ -185,19 +179,53 @@ Slack DMで:
 Persistent Spin Helixについて一文で教えて
 ```
 
+## 7. 更新
+
+コードを更新する場合:
+
+```bash
+cd /volume1/docker/paperbot
+git pull
+```
+
+その後、Portainer:
+
+```text
+Stacks
+-> paperbot
+-> Editor
+-> Update the stack
+```
+
+PDF/indexを更新する場合は、PDFを追加してから `ingest` を実行します。
+
+PortainerのStack editorで一時的に `paperbot` ではなく `ingest` serviceを起動するより、SSHから次を実行する方が簡単です。
+
+```bash
+cd /volume1/docker/paperbot
+sudo docker compose -f docker-compose.stack-local.yml run --rm ingest
+```
+
+その後、Portainerで `kohdalab-paperbot` をrestartします。
+
 ## よくあるエラー
 
-`variable is not set`:
+`env file /volume1/docker/paperbot/.env not found`:
 
-Git repository Stackの場合は、PortainerのEnvironment variablesに値が入っていません。
-NAS local repoの場合は、`/volume1/docker/paperbot/.env` がないか、中身が不足しています。
+Portainer containerから `/volume1/docker/paperbot/.env` が見えていません。
+Portainer containerに `/volume1/docker:/volume1/docker` をmountしてください。
 
 `path "/volume1/docker/paperbot" not found`:
 
-PortainerのWeb editorでhost pathをbuild contextにしています。
-Repository deployを使い、Compose pathを `docker-compose.portainer.yml` にしてください。
-NAS local repoの場合は、SSHで `sudo docker compose -f docker-compose.nas.yml up -d --build paperbot` を使ってください。
+Portainer containerからbuild contextが見えていません。
+Portainer containerに `/volume1/docker:/volume1/docker` をmountしてください。
+
+`variable is not set`:
+
+`docker-compose.stack-local.yml` では基本的に出ないはずです。
+もし出る場合は、別のcompose fileをStackに貼っている可能性があります。
 
 `Index not found`:
 
 `/volume1/docker/paperbot/rag_poc/index/chunks.jsonl` がありません。
+Macで作ったindexをコピーするか、`ingest` を実行してください。
