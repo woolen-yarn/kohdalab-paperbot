@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent
 PAPERS_DIR = ROOT / "papers"
 INDEX_DIR = ROOT / "index"
 INDEX_DB_PATH = INDEX_DIR / "chunks.sqlite3"
+INGEST_REPORT_PATH = INDEX_DIR / "ingest_report.json"
 
 EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 CHUNK_CHARS = int(os.environ.get("PAPERBOT_CHUNK_CHARS", "1800"))
@@ -180,6 +181,13 @@ def insert_chunk(conn: sqlite3.Connection, record: dict) -> None:
     )
 
 
+def write_ingest_report(report: dict) -> None:
+    INGEST_REPORT_PATH.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 def main() -> None:
     PAPERS_DIR.mkdir(parents=True, exist_ok=True)
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
@@ -190,6 +198,9 @@ def main() -> None:
         return
 
     total_chunks = 0
+    indexed_sources = []
+    zero_text_sources = []
+    duplicate_sources = []
     seen_hashes: dict[str, str] = {}
     conn = init_index_db(INDEX_DB_PATH)
     try:
@@ -199,12 +210,24 @@ def main() -> None:
             pdf_hash = file_sha256(pdf)
             if pdf_hash in seen_hashes:
                 print(f"  skipping duplicate of {seen_hashes[pdf_hash]}")
+                duplicate_sources.append(
+                    {
+                        "source": source,
+                        "duplicate_of": seen_hashes[pdf_hash],
+                        "sha256": pdf_hash,
+                    }
+                )
                 continue
             seen_hashes[pdf_hash] = source
 
             pages = remove_references(extract_pages(pdf))
             chunks = chunk_pages(pages)
             print(f"  pages={len(pages)} chunks={len(chunks)}")
+            if not chunks:
+                zero_text_sources.append(source)
+                continue
+
+            indexed_sources.append(source)
 
             for i, chunk in enumerate(chunks, start=1):
                 try:
@@ -231,8 +254,34 @@ def main() -> None:
     finally:
         conn.close()
 
-    print(f"Done. Indexed {len(pdfs)} PDFs / {total_chunks} chunks.")
+    report = {
+        "found_pdfs": len(pdfs),
+        "indexed_pdfs": len(indexed_sources),
+        "zero_text_pdfs": len(zero_text_sources),
+        "duplicate_pdfs": len(duplicate_sources),
+        "chunks": total_chunks,
+        "indexed_sources": indexed_sources,
+        "zero_text_sources": zero_text_sources,
+        "duplicate_sources": duplicate_sources,
+    }
+    write_ingest_report(report)
+
+    print(
+        "Done. "
+        f"Found {len(pdfs)} PDFs / indexed {len(indexed_sources)} PDFs / "
+        f"zero-text {len(zero_text_sources)} PDFs / "
+        f"duplicates {len(duplicate_sources)} PDFs / chunks {total_chunks}."
+    )
     print(f"Index: {INDEX_DB_PATH}")
+    print(f"Report: {INGEST_REPORT_PATH}")
+    if zero_text_sources:
+        print("Zero-text PDFs:")
+        for source in zero_text_sources:
+            print(f"  - {source}")
+    if duplicate_sources:
+        print("Duplicate PDFs:")
+        for item in duplicate_sources:
+            print(f"  - {item['source']} -> {item['duplicate_of']}")
 
 
 if __name__ == "__main__":

@@ -105,6 +105,16 @@ The RAG index is stored as:
 rag_poc/index/chunks.sqlite3
 ```
 
+The ingest summary is stored as:
+
+```text
+rag_poc/index/ingest_report.json
+```
+
+If the indexed PDF count is lower than the number of PDF files, check this report.
+`zero_text_sources` are PDFs where text extraction produced no chunks, and
+`duplicate_sources` are exact duplicate files skipped by SHA-256 hash.
+
 ## Test RAG Without Slack
 
 ```bash
