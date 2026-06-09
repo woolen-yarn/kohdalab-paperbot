@@ -67,6 +67,8 @@ Persistent Spin Helixに関係する内容を教えて
 
 The bot should reply with an answer and `Sources` such as `S1`, `S2`, etc.
 
+In DM, PaperBot replies as normal sequential messages. In channel mentions, it replies in a thread to avoid cluttering the channel.
+
 ## Slack Commands
 
 PaperBot understands these commands in DM or mention replies:
