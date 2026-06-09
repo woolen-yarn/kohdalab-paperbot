@@ -1,15 +1,28 @@
 # Portainer Deployment
 
-PortainerだけでPaperBotを起動する場合は、Git repository Stackとしてdeployします。
+PaperBotは、DS920+上にrepoを置いて運用できます。
+
+おすすめは次の分担です。
+
+```text
+DS920+ local repo
+  /volume1/docker/paperbot
+  git pull
+  docker compose build/up
+
+Portainer
+  containerの起動状態確認
+  logs確認
+  restart/stop/start
+```
+
+PortainerのGit repository Stackは、NAS上にrepoを置かない場合の別案です。
 
 ## 方針
 
 ```text
-Portainer
-  Git repositoryからbuild contextを取得
-  Environment variablesでSlack tokenを渡す
-
 DS920+ host path
+  /volume1/docker/paperbot
   /volume1/docker/paperbot/rag_poc/papers
   /volume1/docker/paperbot/rag_poc/index
   /volume1/docker/paperbot/logs
@@ -18,19 +31,53 @@ RTX PC
   Ollama: http://10.32.145.143:11434
 ```
 
-`stack.env` や `.env` をGit repoに入れません。
+`.env` はNAS上のrepoに置きますが、Gitにはcommitしません。
 
-## 1. データ用フォルダを作る
+## 1. NASにrepoを置く
 
 DS920+のSSHで:
 
 ```bash
+cd /volume1/docker
+git clone git@github.com-paperbot:Kohdalab/kohdalab-paperbot.git paperbot
+cd /volume1/docker/paperbot
+
 mkdir -p /volume1/docker/paperbot/rag_poc/papers
 mkdir -p /volume1/docker/paperbot/rag_poc/index
 mkdir -p /volume1/docker/paperbot/logs
 ```
 
-MacからPDF/indexをコピーします。
+既にclone済みなら:
+
+```bash
+cd /volume1/docker/paperbot
+git pull
+```
+
+## 2. `.env` を作る
+
+```bash
+cd /volume1/docker/paperbot
+cp .env.example .env
+vi .env
+```
+
+最低限これを入れます。
+
+```text
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_APP_TOKEN=xapp-...
+OLLAMA_BASE_URL=http://10.32.145.143:11434
+OLLAMA_CHAT_MODEL=qwen3:8b
+OLLAMA_EMBED_MODEL=nomic-embed-text
+PAPERBOT_TOP_K=6
+PAPERBOT_MAX_PER_SOURCE=3
+PAPERBOT_LOG_LEVEL=INFO
+```
+
+## 3. PDF/indexを置く
+
+MacからPDF/indexをコピーします。`NAS_IP` はDS920+のIPまたは名前に置き換えてください。
 
 ```bash
 rsync -av /Users/kikuchikeito/projects/llm/rag_poc/papers/ \
@@ -40,9 +87,46 @@ rsync -av /Users/kikuchikeito/projects/llm/rag_poc/index/ \
   Kohdalab@NAS_IP:/volume1/docker/paperbot/rag_poc/index/
 ```
 
-## 2. Portainer Stackを作る
+## 4. 起動
 
-Portainer:
+まずSSHから起動します。
+
+```bash
+cd /volume1/docker/paperbot
+sudo docker compose -f docker-compose.nas.yml up -d --build paperbot
+```
+
+これでPortainer側にも `kohdalab-paperbot` containerが表示されます。
+
+Portainerでは:
+
+```text
+Containers
+-> kohdalab-paperbot
+-> Logs / Restart / Stop / Start
+```
+
+## 5. 更新
+
+コード更新:
+
+```bash
+cd /volume1/docker/paperbot
+git pull
+sudo docker compose -f docker-compose.nas.yml up -d --build paperbot
+```
+
+PDF/index更新:
+
+```bash
+cd /volume1/docker/paperbot
+sudo docker compose -f docker-compose.nas.yml run --rm ingest
+sudo docker compose -f docker-compose.nas.yml restart paperbot
+```
+
+## 6. Portainerだけでdeployしたい場合
+
+PortainerだけでGitHubからdeployする場合は、Git repository Stackとしてdeployします。
 
 ```text
 Stacks
@@ -50,8 +134,6 @@ Stacks
 -> Name: paperbot
 -> Build method: Repository
 ```
-
-Repositoryは2通りあります。
 
 簡単に試す場合はpublic mirror:
 
@@ -81,24 +163,7 @@ Compose path:
 
 private originの場合は、Portainer側にGit authentication/SSH keyを設定してください。
 
-## 3. Environment variables
-
-PortainerのStack画面下部のEnvironment variablesに追加します。
-
-```text
-SLACK_BOT_TOKEN=xoxb-...
-SLACK_APP_TOKEN=xapp-...
-OLLAMA_BASE_URL=http://10.32.145.143:11434
-OLLAMA_CHAT_MODEL=qwen3:8b
-OLLAMA_EMBED_MODEL=nomic-embed-text
-PAPERBOT_TOP_K=6
-PAPERBOT_MAX_PER_SOURCE=3
-PAPERBOT_LOG_LEVEL=INFO
-```
-
-その後、`Deploy the stack` を押します。
-
-## 4. 確認
+## 7. 確認
 
 Portainer:
 
@@ -120,26 +185,18 @@ Slack DMで:
 Persistent Spin Helixについて一文で教えて
 ```
 
-## 5. 更新
-
-GitHubにpush後、Portainer Stackの画面で:
-
-```text
-Pull and redeploy
-```
-
-PDF/indexを更新した場合は、データフォルダ側を更新してからcontainerをrestartします。
-
 ## よくあるエラー
 
 `variable is not set`:
 
-PortainerのEnvironment variablesに値が入っていません。
+Git repository Stackの場合は、PortainerのEnvironment variablesに値が入っていません。
+NAS local repoの場合は、`/volume1/docker/paperbot/.env` がないか、中身が不足しています。
 
 `path "/volume1/docker/paperbot" not found`:
 
-Web editorでhost pathをbuild contextにしています。
+PortainerのWeb editorでhost pathをbuild contextにしています。
 Repository deployを使い、Compose pathを `docker-compose.portainer.yml` にしてください。
+NAS local repoの場合は、SSHで `sudo docker compose -f docker-compose.nas.yml up -d --build paperbot` を使ってください。
 
 `Index not found`:
 
