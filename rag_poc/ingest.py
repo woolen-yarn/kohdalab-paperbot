@@ -7,7 +7,10 @@ from pathlib import Path
 
 import fitz
 
-from ollama_client import OllamaError, embed
+try:
+    from .ollama_client import OllamaError, embed
+except ImportError:
+    from ollama_client import OllamaError, embed
 
 
 ROOT = Path(__file__).resolve().parent
@@ -124,7 +127,15 @@ def chunk_pages(pages: list[dict]) -> list[dict]:
 
 
 def iter_pdfs() -> list[Path]:
-    return sorted(PAPERS_DIR.glob("*.pdf"))
+    return sorted(
+        path
+        for path in PAPERS_DIR.rglob("*")
+        if path.is_file() and path.suffix.lower() == ".pdf"
+    )
+
+
+def source_name(path: Path) -> str:
+    return path.relative_to(PAPERS_DIR).as_posix()
 
 
 def init_index_db(path: Path) -> sqlite3.Connection:
@@ -182,7 +193,8 @@ def main() -> None:
     conn = init_index_db(INDEX_DB_PATH)
     try:
         for pdf in pdfs:
-            print(f"Reading {pdf.name}")
+            source = source_name(pdf)
+            print(f"Reading {source}")
             pdf_hash = file_sha256(pdf)
             pages = remove_references(extract_pages(pdf))
             chunks = chunk_pages(pages)
@@ -200,7 +212,7 @@ def main() -> None:
 
                 record = {
                     "id": f"{pdf_hash[:12]}-{i:04d}",
-                    "source": pdf.name,
+                    "source": source,
                     "sha256": pdf_hash,
                     "page_start": chunk["page_start"],
                     "page_end": chunk["page_end"],
