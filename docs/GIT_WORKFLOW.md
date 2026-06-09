@@ -119,7 +119,7 @@ PDFとindexを配置します。
 
 ```text
 /volume1/docker/paperbot/rag_poc/papers/
-/volume1/docker/paperbot/rag_poc/index/chunks.jsonl
+/volume1/docker/paperbot/rag_poc/index/chunks.sqlite3
 ```
 
 起動します。

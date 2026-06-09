@@ -9,11 +9,11 @@ Mac
 ├─ rag_poc/papers/       PDFを置く
 ├─ ingest.py             PDF抽出 + chunk化 + embedding
 ├─ ask.py                検索 + Ollama回答
-└─ index/chunks.jsonl    作成される簡易index
+└─ index/chunks.sqlite3  作成されるRAG index
 
 RTX PC
 └─ Ollama
-   ├─ qwen3:8b
+   ├─ gpt-oss:20b
    └─ nomic-embed-text
 ```
 
@@ -25,10 +25,10 @@ RTX PCのPowerShellで:
 ollama pull nomic-embed-text
 ```
 
-`qwen3:8b` がまだなら:
+`gpt-oss:20b` がまだなら:
 
 ```powershell
-ollama pull qwen3:8b
+ollama pull gpt-oss:20b
 ```
 
 Macから疎通確認:
@@ -66,7 +66,7 @@ make ingest
 作成されるファイル:
 
 ```text
-rag_poc/index/chunks.jsonl
+rag_poc/index/chunks.sqlite3
 ```
 
 ## 5. 質問する
@@ -80,7 +80,7 @@ make ask Q="TRKRで300 K測定している論文は？"
 
 ```bash
 export OLLAMA_BASE_URL="http://rtx-pc.example.invalid:11434"
-export OLLAMA_CHAT_MODEL="qwen3:8b"
+export OLLAMA_CHAT_MODEL="gpt-oss:20b"
 export OLLAMA_EMBED_MODEL="nomic-embed-text"
 make ask Q="PSHの寿命異方性について教えて"
 ```
@@ -98,4 +98,4 @@ PDFを追加して `ingest.py` を再実行した後は、`bot.py` も再起動�
 
 ## 次にやること
 
-JSONL indexをPostgres + pgvectorへ移行します。
+SQLite indexを必要に応じてQdrantやPostgres + pgvectorへ移行します。
