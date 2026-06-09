@@ -3,6 +3,7 @@ import logging.handlers
 import os
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from slack_bolt import App
@@ -11,6 +12,8 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 LOG_DIR = PROJECT_ROOT / "logs"
+PAPERS_DIR = PROJECT_ROOT / "rag_poc" / "papers"
+LAST_RESULTS: dict[tuple[str, str], "RagResult"] = {}
 
 
 def load_env_file(path: Path) -> None:
@@ -59,7 +62,7 @@ def setup_logging() -> logging.Logger:
 
 load_env_file(PROJECT_ROOT / ".env")
 
-from rag_poc.ask import answer_question, format_sources
+from rag_poc.ask import CHAT_MODEL, EMBED_MODEL, TOP_K, answer_question, format_sources
 
 SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
 SLACK_APP_TOKEN = os.environ["SLACK_APP_TOKEN"]
@@ -68,16 +71,126 @@ logger = setup_logging()
 app = App(token=SLACK_BOT_TOKEN)
 
 
-def ask_rag(question: str) -> tuple[str, str, float]:
+@dataclass(frozen=True)
+class RagResult:
+    message: str
+    answer: str
+    sources: str
+    duration: float
+    model: str
+    question: str
+
+
+def format_rag_message(answer: str, sources: str) -> str:
+    clean_answer = answer.strip() or "LLMが空の回答を返しました。Sourcesを確認してください。"
+    clean_sources = sources.strip() or "No sources."
+    return f"*Answer*\n{clean_answer}\n\n*Sources*\n```{clean_sources}```"
+
+
+def ask_rag(question: str) -> RagResult:
     started = time.monotonic()
     answer, contexts = answer_question(question)
     sources = format_sources(contexts)
     duration = time.monotonic() - started
-    message = f"{answer}\n\n*Sources*\n```{sources}```"
-    return message, sources, duration
+    message = format_rag_message(answer, sources)
+    return RagResult(
+        message=message,
+        answer=answer,
+        sources=sources,
+        duration=duration,
+        model=CHAT_MODEL,
+        question=question,
+    )
+
+
+def latest_papers(limit: int = 8) -> list[Path]:
+    if not PAPERS_DIR.exists():
+        return []
+    papers = [path for path in PAPERS_DIR.glob("*.pdf") if path.is_file()]
+    papers.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return papers[:limit]
+
+
+def command_help() -> str:
+    return "\n".join(
+        [
+            "*PaperBot commands*",
+            "`/help`  このヘルプを表示",
+            "`/model`  現在のLLM/embedding設定を表示",
+            "`/sources`  直前の回答で使ったSourcesを再表示",
+            "`/recent`  NAS上の最近のPDFを表示",
+            "",
+            "通常の質問はそのまま送ってください。例: `Persistent Spin Helixについて一文で教えて`",
+        ]
+    )
+
+
+def command_model() -> str:
+    return "\n".join(
+        [
+            "*Current model settings*",
+            f"`OLLAMA_BASE_URL`: `{os.environ.get('OLLAMA_BASE_URL', 'default')}`",
+            f"`OLLAMA_CHAT_MODEL`: `{CHAT_MODEL}`",
+            f"`OLLAMA_EMBED_MODEL`: `{EMBED_MODEL}`",
+            f"`PAPERBOT_TOP_K`: `{TOP_K}`",
+        ]
+    )
+
+
+def command_sources(channel: str, user: str) -> str:
+    result = LAST_RESULTS.get((channel, user))
+    if not result:
+        return "まだこのDMで回答履歴がありません。先に質問を送ってください。"
+    return (
+        f"*Last question*\n{result.question}\n\n"
+        f"*Model*: `{result.model}` / `{result.duration:.2f}s`\n\n"
+        f"*Sources*\n```{result.sources}```"
+    )
+
+
+def command_recent() -> str:
+    papers = latest_papers()
+    if not papers:
+        return "NAS上の `rag_poc/papers` にPDFがまだ見つかりません。"
+    lines = ["*Recent PDFs*"]
+    for i, path in enumerate(papers, start=1):
+        lines.append(f"{i}. {path.name}")
+    return "\n".join(lines)
+
+
+def handle_command(text: str, channel: str, user: str) -> str | None:
+    command = text.strip().split(maxsplit=1)[0].lower()
+    if command in {"/help", "help"}:
+        return command_help()
+    if command in {"/model", "model"}:
+        return command_model()
+    if command in {"/sources", "sources"}:
+        return command_sources(channel, user)
+    if command in {"/recent", "recent"}:
+        return command_recent()
+    if command.startswith("/"):
+        return "未知のコマンドです。`/help` を見てください。"
+    return None
 
 
 def reply_with_rag(client, channel: str, thread_ts: str, question: str, user: str, surface: str) -> None:
+    command_response = handle_command(question, channel, user)
+    if command_response is not None:
+        logger.info(
+            "command user=%s surface=%s channel=%s command=%r model=%s",
+            user,
+            surface,
+            channel,
+            question,
+            CHAT_MODEL,
+        )
+        client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text=command_response,
+        )
+        return
+
     client.chat_postMessage(
         channel=channel,
         thread_ts=thread_ts,
@@ -85,26 +198,36 @@ def reply_with_rag(client, channel: str, thread_ts: str, question: str, user: st
     )
 
     try:
-        answer, sources, duration = ask_rag(question)
+        result = ask_rag(question)
     except Exception as e:
         logger.exception(
-            "rag_error user=%s surface=%s channel=%s question=%r",
+            "rag_error user=%s surface=%s channel=%s model=%s question=%r",
             user,
             surface,
             channel,
+            CHAT_MODEL,
             question,
         )
         answer = f"RAG処理でエラーが出ました: `{e}`"
     else:
+        LAST_RESULTS[(channel, user)] = result
         logger.info(
-            "rag_answer user=%s surface=%s channel=%s duration_sec=%.2f question=%r sources=%r",
+            (
+                "rag_answer user=%s surface=%s channel=%s model=%s embed_model=%s "
+                "duration_sec=%.2f answer_chars=%d sources_chars=%d question=%r sources=%r"
+            ),
             user,
             surface,
             channel,
-            duration,
+            result.model,
+            EMBED_MODEL,
+            result.duration,
+            len(result.answer),
+            len(result.sources),
             question,
-            sources,
+            result.sources,
         )
+        answer = result.message
 
     client.chat_postMessage(
         channel=channel,
@@ -153,7 +276,13 @@ def handle_dm(event, client):
 
 
 def main() -> None:
-    logger.info("paperbot_start ollama_base_url=%s", os.environ.get("OLLAMA_BASE_URL", "default"))
+    logger.info(
+        "paperbot_start ollama_base_url=%s chat_model=%s embed_model=%s top_k=%s",
+        os.environ.get("OLLAMA_BASE_URL", "default"),
+        CHAT_MODEL,
+        EMBED_MODEL,
+        TOP_K,
+    )
     SocketModeHandler(app, SLACK_APP_TOKEN).start()
 
 
