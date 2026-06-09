@@ -2,6 +2,13 @@
 
 Slack DMからMac上のPDF RAGを呼び、RTX PCのOllamaで回答する最小構成です。
 
+GitHub:
+
+```text
+origin   https://github.com/Kohdalab/kohdalab-paperbot
+personal https://github.com/woolen-yarn/kohdalab-paperbot
+```
+
 ```text
 Slack DM
   -> Mac: bot.py

@@ -1,12 +1,13 @@
 # Git Workflow
 
-このrepoはGitHub private repoで管理し、DS920+はGitから取得してDocker Composeで起動します。
+このrepoはGitHub public repoで管理し、DS920+はGitから取得してDocker Composeで起動します。
 
 ```text
 Mac
-  edit -> commit -> push
+  edit -> commit -> push origin
+  optional: push personal
 
-GitHub private repo
+GitHub public repo
   source of code/config templates
 
 DS920+
@@ -16,6 +17,15 @@ RTX PC
   Ollama API server
 ```
 
+## Remotes
+
+```text
+origin   https://github.com/Kohdalab/kohdalab-paperbot.git
+personal https://github.com/woolen-yarn/kohdalab-paperbot.git
+```
+
+`origin` をKohdalabの運用repo、`personal` をwoolen-yarn個人repoとして使います。
+
 ## Mac側
 
 ```bash
@@ -23,7 +33,8 @@ cd /Users/kikuchikeito/projects/llm
 git status
 git add .
 git commit -m "Update PaperBot"
-git push
+git push origin master
+git push personal master
 ```
 
 GitHubに入れるもの:
@@ -52,8 +63,16 @@ __pycache__/
 
 ## DS920+ 初回
 
-Private repoなので、DS920+からcloneするにはGitHub認証が必要です。
-おすすめは読み取り専用のSSH deploy keyです。
+Public repoなので、まずはHTTPS cloneが一番簡単です。
+
+```bash
+cd /volume1/docker
+git clone https://github.com/Kohdalab/kohdalab-paperbot.git paperbot
+cd paperbot
+cp .env.example .env
+```
+
+将来privateに戻す可能性や、SSHで統一したい場合は、読み取り専用のSSH deploy keyも使えます。
 
 DS920+にSSHで入り、鍵を作ります。
 
@@ -62,7 +81,7 @@ ssh-keygen -t ed25519 -C "ds920-paperbot" -f ~/.ssh/paperbot_deploy_key
 cat ~/.ssh/paperbot_deploy_key.pub
 ```
 
-GitHub repoの `Settings` -> `Deploy keys` -> `Add deploy key` に公開鍵を追加します。
+GitHub repo `Kohdalab/kohdalab-paperbot` の `Settings` -> `Deploy keys` -> `Add deploy key` に公開鍵を追加します。
 `Allow write access` はOFFのままでOKです。
 
 DS920+のSSH設定に、この鍵を使う設定を追加します。
@@ -85,11 +104,11 @@ chmod 600 ~/.ssh/config ~/.ssh/paperbot_deploy_key
 ssh -T github.com-paperbot
 ```
 
-cloneします。
+SSHでcloneする場合:
 
 ```bash
 cd /volume1/docker
-git clone git@github.com-paperbot:woolen-yarn/kohdalab-paperbot.git paperbot
+git clone git@github.com-paperbot:Kohdalab/kohdalab-paperbot.git paperbot
 cd paperbot
 cp .env.example .env
 ```
