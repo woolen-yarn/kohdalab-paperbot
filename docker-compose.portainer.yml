@@ -1,0 +1,21 @@
+services:
+  paperbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kohdalab-paperbot
+    restart: unless-stopped
+    environment:
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://10.32.145.143:11434}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen3:8b}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      PAPERBOT_TOP_K: ${PAPERBOT_TOP_K:-6}
+      PAPERBOT_MAX_PER_SOURCE: ${PAPERBOT_MAX_PER_SOURCE:-3}
+      PAPERBOT_LOG_LEVEL: ${PAPERBOT_LOG_LEVEL:-INFO}
+    volumes:
+      - /volume1/docker/paperbot/rag_poc/papers:/app/rag_poc/papers
+      - /volume1/docker/paperbot/rag_poc/index:/app/rag_poc/index
+      - /volume1/docker/paperbot/logs:/app/logs
+    command: ["python", "bot.py"]
