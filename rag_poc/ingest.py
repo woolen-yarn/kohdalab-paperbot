@@ -190,12 +190,18 @@ def main() -> None:
         return
 
     total_chunks = 0
+    seen_hashes: dict[str, str] = {}
     conn = init_index_db(INDEX_DB_PATH)
     try:
         for pdf in pdfs:
             source = source_name(pdf)
             print(f"Reading {source}")
             pdf_hash = file_sha256(pdf)
+            if pdf_hash in seen_hashes:
+                print(f"  skipping duplicate of {seen_hashes[pdf_hash]}")
+                continue
+            seen_hashes[pdf_hash] = source
+
             pages = remove_references(extract_pages(pdf))
             chunks = chunk_pages(pages)
             print(f"  pages={len(pages)} chunks={len(chunks)}")
