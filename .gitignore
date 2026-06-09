@@ -13,3 +13,8 @@ wheels/
 # Local secrets and runtime logs
 .env
 logs/
+
+# Local paper data and generated indexes
+rag_poc/papers/*
+!rag_poc/papers/.gitkeep
+rag_poc/index/
