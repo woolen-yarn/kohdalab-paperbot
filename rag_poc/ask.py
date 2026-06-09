@@ -20,6 +20,54 @@ EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 TOP_K = int(os.environ.get("PAPERBOT_TOP_K", "6"))
 MAX_PER_SOURCE = int(os.environ.get("PAPERBOT_MAX_PER_SOURCE", "3"))
 TOKEN_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9+\-]*|\d+(?:\.\d+)?")
+CANONICAL_TERMS = (
+    "Persistent Spin Helix",
+    "PSH",
+    "Rashba",
+    "Dresselhaus",
+    "Rashba-Dresselhaus",
+    "spin-orbit interaction",
+    "SU(2)",
+    "2DEG",
+    "TRKR",
+    "GaAs",
+    "(In,Ga)As",
+    "(Al,Ga)As",
+    "D'yakonov-Perel'",
+    "Koralek",
+    "Bernevig",
+    "Orenstein",
+    "Kohda",
+    "Salis",
+)
+
+TERM_FIXES = (
+    ("ランショー", "Rashba"),
+    ("ラシュバ", "Rashba"),
+    ("ラシバ", "Rashba"),
+    ("ドレスラー", "Dresselhaus"),
+    ("ドレッセルハウス", "Dresselhaus"),
+    ("ドレスルハウス", "Dresselhaus"),
+    ("ドレセルハウス", "Dresselhaus"),
+    ("スピン・オービタル", "spin-orbit"),
+    ("スピン・オービット", "spin-orbit"),
+    ("スピンオービット", "spin-orbit"),
+    ("永続スピンヘリックス", "Persistent Spin Helix (PSH)"),
+    ("持続性スピンヘリックス", "Persistent Spin Helix (PSH)"),
+    ("持続スピンヘリックス", "Persistent Spin Helix (PSH)"),
+)
+
+CANONICAL_CASE_PATTERNS = (
+    (re.compile(r"\bpersistent spin helix\b", re.IGNORECASE), "Persistent Spin Helix"),
+    (re.compile(r"\bpsh\b", re.IGNORECASE), "PSH"),
+    (re.compile(r"\brashba\b", re.IGNORECASE), "Rashba"),
+    (re.compile(r"\bdresselhaus\b", re.IGNORECASE), "Dresselhaus"),
+    (re.compile(r"spin[- ]orbit\s*相互作用", re.IGNORECASE), "spin-orbit interaction"),
+    (re.compile(r"\bsu\s*\(\s*2\s*\)", re.IGNORECASE), "SU(2)"),
+    (re.compile(r"\b2deg\b", re.IGNORECASE), "2DEG"),
+    (re.compile(r"\btrkr\b", re.IGNORECASE), "TRKR"),
+    (re.compile(r"\bgaas\b", re.IGNORECASE), "GaAs"),
+)
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -75,6 +123,15 @@ def focus_score(question: str, text: str) -> float:
     if not terms:
         return 0.0
     return 1.0 if any(term in lowered for term in terms) else 0.0
+
+
+def normalize_technical_terms(answer: str) -> str:
+    normalized = answer
+    for source, target in TERM_FIXES:
+        normalized = normalized.replace(source, target)
+    for pattern, replacement in CANONICAL_CASE_PATTERNS:
+        normalized = pattern.sub(replacement, normalized)
+    return normalized
 
 
 @lru_cache(maxsize=1)
@@ -140,6 +197,7 @@ def search(question: str, chunks: list[dict]) -> list[dict]:
 
 
 def build_prompt(question: str, contexts: list[dict]) -> str:
+    canonical_terms = ", ".join(CANONICAL_TERMS)
     context_text = "\n\n".join(
         (
             f"Source S{i}: {ctx['source']} pp.{ctx['page_start']}-{ctx['page_end']} "
@@ -154,6 +212,11 @@ def build_prompt(question: str, contexts: list[dict]) -> str:
 回答では、根拠を必ず S1, S2 のようなSource IDで示してください。
 PDF本文中に出てくる [12], [27] のような引用番号は、回答の根拠番号として使わないでください。
 抜粋に書かれていない論文番号、著者名、材料、応用例を推測で追加しないでください。
+専門用語・固有名詞は原則として文献抜粋の英語表記を維持してください。
+特に次の語は翻訳、カタカナ化、言い換え、誤変換をしないでください:
+{canonical_terms}
+Rashba, Dresselhaus, SU(2), 2DEG, TRKR, GaAs, PSH などは日本語文中でも英語表記のまま使ってください。
+確信のない専門語、著者名、材料名は日本語に訳さず、原文の英語表記をそのまま使ってください。
 
 質問:
 {question}
@@ -179,6 +242,7 @@ def answer_question(question: str) -> tuple[str, list[dict]]:
     chunks = list(load_chunks())
     contexts = search(question, chunks)
     answer = generate(build_prompt(question, contexts), CHAT_MODEL)
+    answer = normalize_technical_terms(answer)
     return answer, contexts
 
 
