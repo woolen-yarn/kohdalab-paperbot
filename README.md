@@ -111,7 +111,7 @@ For GitHub + DS920+ workflow, use:
 
 [docs/GIT_WORKFLOW.md](docs/GIT_WORKFLOW.md)
 
-For Portainer-only deployment, use:
+For NAS-local repo operation with Portainer management, use:
 
 [docs/PORTAINER_DEPLOY.md](docs/PORTAINER_DEPLOY.md)
 
