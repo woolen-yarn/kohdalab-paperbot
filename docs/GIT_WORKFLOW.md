@@ -1,14 +1,16 @@
 # Git Workflow
 
-このrepoはGitHub public repoで管理し、DS920+はGitから取得してDocker Composeで起動します。
+このrepoはKohdalabのprivate repoをoriginとして管理し、DS920+はGitから取得してDocker Composeで起動します。
+個人用のwoolen-yarn repoはpublic mirrorとして持ちます。
 
 ```text
 Mac
   edit -> commit -> push origin
   optional: push personal
 
-GitHub public repo
-  source of code/config templates
+GitHub
+  origin: Kohdalab/kohdalab-paperbot private
+  personal: woolen-yarn/kohdalab-paperbot public mirror
 
 DS920+
   git pull -> docker compose up -d --build paperbot
@@ -20,8 +22,8 @@ RTX PC
 ## Remotes
 
 ```text
-origin   https://github.com/Kohdalab/kohdalab-paperbot.git
-personal https://github.com/woolen-yarn/kohdalab-paperbot.git
+origin   https://github.com/Kohdalab/kohdalab-paperbot.git      private
+personal https://github.com/woolen-yarn/kohdalab-paperbot.git   public
 ```
 
 `origin` をKohdalabの運用repo、`personal` をwoolen-yarn個人repoとして使います。
@@ -34,7 +36,7 @@ git status
 git add .
 git commit -m "Update PaperBot"
 git push origin master
-git push personal master
+git push personal master  # public mirrorも更新する場合だけ
 ```
 
 GitHubに入れるもの:
@@ -63,16 +65,8 @@ __pycache__/
 
 ## DS920+ 初回
 
-Public repoなので、まずはHTTPS cloneが一番簡単です。
-
-```bash
-cd /volume1/docker
-git clone https://github.com/Kohdalab/kohdalab-paperbot.git paperbot
-cd paperbot
-cp .env.example .env
-```
-
-将来privateに戻す可能性や、SSHで統一したい場合は、読み取り専用のSSH deploy keyも使えます。
+Kohdalab repoはprivateなので、DS920+からcloneするにはGitHub認証が必要です。
+おすすめは読み取り専用のSSH deploy keyです。
 
 DS920+にSSHで入り、鍵を作ります。
 
@@ -104,7 +98,7 @@ chmod 600 ~/.ssh/config ~/.ssh/paperbot_deploy_key
 ssh -T github.com-paperbot
 ```
 
-SSHでcloneする場合:
+cloneします。
 
 ```bash
 cd /volume1/docker
