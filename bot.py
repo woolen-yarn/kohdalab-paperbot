@@ -62,7 +62,16 @@ def setup_logging() -> logging.Logger:
 
 load_env_file(PROJECT_ROOT / ".env")
 
-from rag_poc.ask import CHAT_MODEL, EMBED_MODEL, TOP_K, answer_question, format_sources
+from rag_poc.ask import (
+    CHAT_MODEL,
+    DEEP_TOP_K,
+    EMBED_MODEL,
+    SHORT_TOP_K,
+    TOP_K,
+    answer_question,
+    format_source_ids,
+    format_sources,
+)
 
 SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
 SLACK_APP_TOKEN = os.environ["SLACK_APP_TOKEN"]
@@ -76,27 +85,34 @@ class RagResult:
     message: str
     answer: str
     sources: str
+    source_ids: str
     duration: float
     model: str
     question: str
 
 
-def format_rag_message(answer: str, sources: str) -> str:
+def format_rag_message(answer: str, source_ids: str) -> str:
     clean_answer = answer.strip() or "LLMが空の回答を返しました。Sourcesを確認してください。"
-    clean_sources = sources.strip() or "No sources."
-    return f"*Answer*\n{clean_answer}\n\n*Sources*\n```{clean_sources}```"
+    clean_source_ids = source_ids.strip() or "No sources."
+    return (
+        f"*Answer*\n{clean_answer}\n\n"
+        f"*Sources*: {clean_source_ids}\n"
+        "詳細は `sources` と送ってください。"
+    )
 
 
 def ask_rag(question: str) -> RagResult:
     started = time.monotonic()
     answer, contexts = answer_question(question)
     sources = format_sources(contexts)
+    source_ids = format_source_ids(contexts)
     duration = time.monotonic() - started
-    message = format_rag_message(answer, sources)
+    message = format_rag_message(answer, source_ids)
     return RagResult(
         message=message,
         answer=answer,
         sources=sources,
+        source_ids=source_ids,
         duration=duration,
         model=CHAT_MODEL,
         question=question,
@@ -133,6 +149,8 @@ def command_model() -> str:
             f"`OLLAMA_CHAT_MODEL`: `{CHAT_MODEL}`",
             f"`OLLAMA_EMBED_MODEL`: `{EMBED_MODEL}`",
             f"`PAPERBOT_TOP_K`: `{TOP_K}`",
+            f"`PAPERBOT_SHORT_TOP_K`: `{SHORT_TOP_K}`",
+            f"`PAPERBOT_DEEP_TOP_K`: `{DEEP_TOP_K}`",
         ]
     )
 
@@ -223,7 +241,7 @@ def reply_with_rag(
         logger.info(
             (
                 "rag_answer user=%s surface=%s channel=%s model=%s embed_model=%s "
-                "duration_sec=%.2f answer_chars=%d sources_chars=%d question=%r sources=%r"
+                "duration_sec=%.2f answer_chars=%d sources_chars=%d source_ids=%r question=%r sources=%r"
             ),
             user,
             surface,
@@ -233,6 +251,7 @@ def reply_with_rag(
             result.duration,
             len(result.answer),
             len(result.sources),
+            result.source_ids,
             question,
             result.sources,
         )

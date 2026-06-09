@@ -64,9 +64,11 @@ vi .env
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_APP_TOKEN=xapp-...
 OLLAMA_BASE_URL=http://10.32.145.143:11434
-OLLAMA_CHAT_MODEL=qwen3:8b
+OLLAMA_CHAT_MODEL=gpt-oss:20b
 OLLAMA_EMBED_MODEL=nomic-embed-text
 PAPERBOT_TOP_K=6
+PAPERBOT_SHORT_TOP_K=3
+PAPERBOT_DEEP_TOP_K=8
 PAPERBOT_MAX_PER_SOURCE=3
 PAPERBOT_LOG_LEVEL=INFO
 ```
@@ -238,5 +240,5 @@ Portainer containerに `/volume1/docker:/volume1/docker` をmountしてくださ
 
 `Index not found`:
 
-`/volume1/docker/paperbot/rag_poc/index/chunks.jsonl` がありません。
+`/volume1/docker/paperbot/rag_poc/index/chunks.sqlite3` がありません。
 Macで作ったindexをコピーするか、`ingest` を実行してください。

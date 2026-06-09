@@ -12,9 +12,9 @@ personal https://github.com/woolen-yarn/kohdalab-paperbot   public
 ```text
 Slack DM
   -> Mac: bot.py
-  -> Mac: rag_poc/index/chunks.jsonl
+  -> Mac/NAS: rag_poc/index/chunks.sqlite3
   -> RTX PC: Ollama at 10.32.145.143:11434
-  -> Slack reply with sources
+  -> Slack reply with short source IDs
 ```
 
 ## Current Roles
@@ -29,7 +29,7 @@ Mac /Users/kikuchikeito/projects/llm
 
 RTX PC
   Ollama
-  qwen3:8b               chat / answer model
+  gpt-oss:20b            chat / answer model
   nomic-embed-text       embedding model
 ```
 
@@ -65,7 +65,8 @@ Open a DM with PaperBot and send a question, for example:
 Persistent Spin Helixに関係する内容を教えて
 ```
 
-The bot should reply with an answer and `Sources` such as `S1`, `S2`, etc.
+The bot should reply with an answer and short `Sources` such as `S1, S2, S3`.
+Send `sources` to show the full source list from your previous answer.
 
 In DM, PaperBot replies as normal sequential messages. In channel mentions, it replies in a thread to avoid cluttering the channel.
 
@@ -98,6 +99,11 @@ make ingest
 ```
 
 Restart `bot.py` after rebuilding the index, because the bot caches the index in memory.
+The RAG index is stored as:
+
+```text
+rag_poc/index/chunks.sqlite3
+```
 
 ## Test RAG Without Slack
 
@@ -152,7 +158,7 @@ curl -s http://10.32.145.143:11434/api/tags | python3 -m json.tool
 Required models on the RTX PC:
 
 ```powershell
-ollama pull qwen3:8b
+ollama pull gpt-oss:20b
 ollama pull nomic-embed-text
 ```
 
@@ -178,8 +184,9 @@ uv run python scripts/benchmark_ollama_models.py \
 
 ## Notes
 
-- This is the MVP. It intentionally uses a local JSONL index instead of Postgres/pgvector.
+- This is the MVP. It intentionally uses a local SQLite index instead of Postgres/pgvector.
 - `rag_poc/ingest.py` removes obvious References pages before indexing to reduce citation-list hallucinations.
 - `rag_poc/ask.py` uses a light hybrid score: embedding similarity plus keyword/topic hints.
+- Short questions such as "一文で" use fewer retrieved chunks; deeper comparison/review questions use more.
 - `.env` and `logs/` are intentionally ignored by Git.
 - DS920+ deployment keeps always-on Bot control on NAS and heavy LLM/embedding on RTX PC.

@@ -5,7 +5,7 @@ DS920+をPaperBotの常時起動ノードにして、重いLLM/embeddingはRTX P
 ```text
 Slack DM
   -> DS920+: paperbot container
-  -> DS920+: rag_poc/index/chunks.jsonl
+  -> DS920+: rag_poc/index/chunks.sqlite3
   -> RTX PC: http://10.32.145.143:11434
   -> Slack reply
 ```
@@ -15,7 +15,7 @@ Slack DM
 RTX PCでOllamaがLAN公開されていること:
 
 ```powershell
-ollama pull qwen3:8b
+ollama pull gpt-oss:20b
 ollama pull nomic-embed-text
 ```
 
@@ -49,8 +49,11 @@ SLACK_BOT_TOKEN=xoxb-...
 SLACK_APP_TOKEN=xapp-...
 
 OLLAMA_BASE_URL=http://10.32.145.143:11434
-OLLAMA_CHAT_MODEL=qwen3:8b
+OLLAMA_CHAT_MODEL=gpt-oss:20b
 OLLAMA_EMBED_MODEL=nomic-embed-text
+PAPERBOT_TOP_K=6
+PAPERBOT_SHORT_TOP_K=3
+PAPERBOT_DEEP_TOP_K=8
 ```
 
 ## 3. PDF/indexを置く
@@ -64,7 +67,7 @@ PDF:
 既にMacで作ったindexを使う場合:
 
 ```text
-/volume1/docker/paperbot/rag_poc/index/chunks.jsonl
+/volume1/docker/paperbot/rag_poc/index/chunks.sqlite3
 ```
 
 DS920+上で作り直す場合:

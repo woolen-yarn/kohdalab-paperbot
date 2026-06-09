@@ -2,6 +2,7 @@ import json
 import math
 import os
 import re
+import sqlite3
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -13,13 +14,23 @@ except ImportError:
 
 
 ROOT = Path(__file__).resolve().parent
-INDEX_PATH = ROOT / "index" / "chunks.jsonl"
+INDEX_DB_PATH = ROOT / "index" / "chunks.sqlite3"
 
 CHAT_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:8b")
 EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 TOP_K = int(os.environ.get("PAPERBOT_TOP_K", "6"))
+SHORT_TOP_K = int(os.environ.get("PAPERBOT_SHORT_TOP_K", "3"))
+DEEP_TOP_K = int(os.environ.get("PAPERBOT_DEEP_TOP_K", "8"))
 MAX_PER_SOURCE = int(os.environ.get("PAPERBOT_MAX_PER_SOURCE", "3"))
 TOKEN_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9+\-]*|\d+(?:\.\d+)?")
+SHORT_QUESTION_RE = re.compile(
+    r"(一文|1文|１文|一言|ひとこと|短く|簡潔|brief|one sentence|in one sentence)",
+    re.IGNORECASE,
+)
+DEEP_QUESTION_RE = re.compile(
+    r"(比較|違い|まとめ|歴史|レビュー|網羅|詳しく|詳細|体系|整理|compare|review|history)",
+    re.IGNORECASE,
+)
 CANONICAL_TERMS = (
     "Persistent Spin Helix",
     "PSH",
@@ -150,18 +161,53 @@ def normalize_technical_terms(answer: str) -> str:
 
 @lru_cache(maxsize=1)
 def load_chunks() -> tuple[dict, ...]:
-    if not INDEX_PATH.exists():
-        raise FileNotFoundError(f"Index not found. Run: python {ROOT / 'ingest.py'}")
+    if not INDEX_DB_PATH.exists():
+        raise FileNotFoundError(
+            f"SQLite index not found. Run: python {ROOT / 'ingest.py'}"
+        )
 
     chunks = []
-    with INDEX_PATH.open("r", encoding="utf-8") as f:
-        for line in f:
-            if line.strip():
-                chunks.append(json.loads(line))
+    conn = sqlite3.connect(INDEX_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, source, sha256, page_start, page_end, text, embedding_json
+            FROM chunks
+            ORDER BY rowid
+            """
+        )
+        for row in rows:
+            chunks.append(
+                {
+                    "id": row["id"],
+                    "source": row["source"],
+                    "sha256": row["sha256"],
+                    "page_start": row["page_start"],
+                    "page_end": row["page_end"],
+                    "text": row["text"],
+                    "embedding": json.loads(row["embedding_json"]),
+                }
+            )
+    finally:
+        conn.close()
     return tuple(chunks)
 
 
-def search(question: str, chunks: list[dict]) -> list[dict]:
+def select_top_k(question: str) -> int:
+    if SHORT_QUESTION_RE.search(question):
+        return max(1, min(SHORT_TOP_K, TOP_K))
+    if DEEP_QUESTION_RE.search(question):
+        return max(TOP_K, DEEP_TOP_K)
+    return TOP_K
+
+
+def is_short_question(question: str) -> bool:
+    return bool(SHORT_QUESTION_RE.search(question))
+
+
+def search(question: str, chunks: list[dict], top_k: int | None = None) -> list[dict]:
+    limit = top_k or select_top_k(question)
     query_vec = embed(question, EMBED_MODEL)
     scored = []
     for chunk in chunks:
@@ -190,10 +236,10 @@ def search(question: str, chunks: list[dict]) -> list[dict]:
         seen_pages.add(page_key)
         source_counts[source] = source_counts.get(source, 0) + 1
 
-        if len(results) >= TOP_K:
+        if len(results) >= limit:
             break
 
-    if len(results) < TOP_K:
+    if len(results) < limit:
         for score, chunk in scored:
             page_key = (chunk["source"], chunk["page_start"], chunk["page_end"])
             if page_key in seen_pages:
@@ -204,14 +250,27 @@ def search(question: str, chunks: list[dict]) -> list[dict]:
             results.append(item)
             seen_pages.add(page_key)
 
-            if len(results) >= TOP_K:
+            if len(results) >= limit:
                 break
 
     return results
 
 
+def answer_style_instruction(question: str) -> str:
+    if is_short_question(question):
+        return (
+            "回答は1文だけにしてください。"
+            "前置きや箇条書きは不要です。文末に根拠Source IDを付けてください。"
+        )
+    return (
+        "質問に必要な範囲で簡潔に答えてください。"
+        "複数の論点がある場合のみ箇条書きを使ってください。"
+    )
+
+
 def build_prompt(question: str, contexts: list[dict]) -> str:
     canonical_terms = ", ".join(CANONICAL_TERMS)
+    style_instruction = answer_style_instruction(question)
     context_text = "\n\n".join(
         (
             f"Source S{i}: {ctx['source']} pp.{ctx['page_start']}-{ctx['page_end']} "
@@ -226,6 +285,7 @@ def build_prompt(question: str, contexts: list[dict]) -> str:
 回答では、根拠を必ず S1, S2 のようなSource IDで示してください。
 PDF本文中に出てくる [12], [27] のような引用番号は、回答の根拠番号として使わないでください。
 抜粋に書かれていない論文番号、著者名、材料、応用例を推測で追加しないでください。
+{style_instruction}
 専門用語・固有名詞は原則として文献抜粋の英語表記を維持してください。
 特に次の語は翻訳、カタカナ化、言い換え、誤変換をしないでください:
 {canonical_terms}
@@ -282,9 +342,15 @@ def format_sources(contexts: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def format_source_ids(contexts: list[dict]) -> str:
+    if not contexts:
+        return "No sources."
+    return ", ".join(f"S{i}" for i, _ in enumerate(contexts, start=1))
+
+
 def answer_question(question: str) -> tuple[str, list[dict]]:
     chunks = list(load_chunks())
-    contexts = search(question, chunks)
+    contexts = search(question, chunks, select_top_k(question))
     answer = generate(build_prompt(question, contexts), CHAT_MODEL)
     answer = normalize_technical_terms(answer)
     if not answer.strip():
