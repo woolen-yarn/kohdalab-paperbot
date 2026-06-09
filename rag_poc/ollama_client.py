@@ -64,7 +64,22 @@ def generate(prompt: str, model: str, timeout: int = 240) -> str:
         },
         timeout=timeout,
     )
-    return response.get("response", "").strip()
+    text = response.get("response", "").strip()
+    if text:
+        return text
+
+    # Some chat-tuned models are more reliable through Ollama's chat endpoint.
+    response = _post_json(
+        "/api/chat",
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+        },
+        timeout=timeout,
+    )
+    message = response.get("message") or {}
+    return message.get("content", "").strip()
 
 
 def embed(text: str, model: str, timeout: int = 180) -> list[float]:

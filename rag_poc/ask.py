@@ -243,6 +243,35 @@ PSHを説明するときは「Rashba and linear Dresselhaus spin-orbit interacti
 """
 
 
+def build_empty_answer_retry_prompt(question: str, contexts: list[dict]) -> str:
+    compact_context = "\n\n".join(
+        (
+            f"S{i}: {ctx['text'][:1200]}"
+        )
+        for i, ctx in enumerate(contexts[:3], start=1)
+    )
+    return f"""次の文献抜粋だけを根拠に、質問へ日本語で1文だけ答えてください。
+必ず回答本文を書いてください。空回答は禁止です。
+根拠として文末に (S1) のようにSource IDを付けてください。
+専門用語 Rashba, Dresselhaus, SU(2), PSH, 2DEG, GaAs は英語表記を維持してください。
+
+質問:
+{question}
+
+文献抜粋:
+{compact_context}
+
+1文回答:
+"""
+
+
+def fallback_empty_answer() -> str:
+    return (
+        "検索結果は見つかりましたが、LLMが空の回答を返しました。"
+        "下のSourcesを確認するか、別モデルで再試行してください。"
+    )
+
+
 def format_sources(contexts: list[dict]) -> str:
     lines = []
     for i, ctx in enumerate(contexts, start=1):
@@ -258,6 +287,11 @@ def answer_question(question: str) -> tuple[str, list[dict]]:
     contexts = search(question, chunks)
     answer = generate(build_prompt(question, contexts), CHAT_MODEL)
     answer = normalize_technical_terms(answer)
+    if not answer.strip():
+        answer = generate(build_empty_answer_retry_prompt(question, contexts), CHAT_MODEL)
+        answer = normalize_technical_terms(answer)
+    if not answer.strip():
+        answer = fallback_empty_answer()
     return answer, contexts
 
 
