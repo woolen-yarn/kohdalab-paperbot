@@ -173,7 +173,24 @@ def handle_command(text: str, channel: str, user: str) -> str | None:
     return None
 
 
-def reply_with_rag(client, channel: str, thread_ts: str, question: str, user: str, surface: str) -> None:
+def post_message(client, channel: str, text: str, thread_ts: str | None = None) -> None:
+    payload = {
+        "channel": channel,
+        "text": text,
+    }
+    if thread_ts:
+        payload["thread_ts"] = thread_ts
+    client.chat_postMessage(**payload)
+
+
+def reply_with_rag(
+    client,
+    channel: str,
+    thread_ts: str | None,
+    question: str,
+    user: str,
+    surface: str,
+) -> None:
     command_response = handle_command(question, channel, user)
     if command_response is not None:
         logger.info(
@@ -184,18 +201,10 @@ def reply_with_rag(client, channel: str, thread_ts: str, question: str, user: st
             question,
             CHAT_MODEL,
         )
-        client.chat_postMessage(
-            channel=channel,
-            thread_ts=thread_ts,
-            text=command_response,
-        )
+        post_message(client, channel, command_response, thread_ts)
         return
 
-    client.chat_postMessage(
-        channel=channel,
-        thread_ts=thread_ts,
-        text="PDFを検索しています...",
-    )
+    post_message(client, channel, "PDFを検索しています...", thread_ts)
 
     try:
         result = ask_rag(question)
@@ -229,11 +238,7 @@ def reply_with_rag(client, channel: str, thread_ts: str, question: str, user: st
         )
         answer = result.message
 
-    client.chat_postMessage(
-        channel=channel,
-        thread_ts=thread_ts,
-        text=answer[:39000],
-    )
+    post_message(client, channel, answer[:39000], thread_ts)
 
 
 @app.event("app_mention")
@@ -265,14 +270,13 @@ def handle_dm(event, client):
         return
 
     channel = event["channel"]
-    thread_ts = event.get("thread_ts") or event["ts"]
     question = event.get("text", "").strip()
     user = event.get("user", "unknown")
 
     if not question:
         return
 
-    reply_with_rag(client, channel, thread_ts, question, user, "dm")
+    reply_with_rag(client, channel, None, question, user, "dm")
 
 
 def main() -> None:
