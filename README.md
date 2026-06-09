@@ -122,6 +122,36 @@ cd /Users/kikuchikeito/projects/llm
 make ask Q="PSHの寿命異方性について教えて"
 ```
 
+## Sync Zotero Metadata
+
+Set Zotero credentials in `.env`:
+
+```text
+ZOTERO_LIBRARY_TYPE=group
+ZOTERO_LIBRARY_ID=1234567
+ZOTERO_API_KEY=...
+ZOTERO_SYNC_LIMIT=25
+```
+
+Then fetch recent top-level Zotero items and save paper metadata into SQLite:
+
+```bash
+cd /Users/kikuchikeito/projects/llm
+make zotero
+```
+
+For a connection-only check without writing to SQLite:
+
+```bash
+uv run python rag_poc/zotero_sync.py --limit 5 --dry-run
+```
+
+Metadata is stored in the `papers` table inside:
+
+```text
+rag_poc/index/chunks.sqlite3
+```
+
 ## Logs
 
 Runtime logs are written here:

@@ -8,8 +8,9 @@ Mac上でPDF 10本を対象にした最小RAGを動かすためのPoCです。
 Mac
 ├─ rag_poc/papers/       PDFを置く
 ├─ ingest.py             PDF抽出 + chunk化 + embedding
+├─ zotero_sync.py        Zotero metadata sync
 ├─ ask.py                検索 + Ollama回答
-└─ index/chunks.sqlite3  作成されるRAG index
+└─ index/chunks.sqlite3  RAG chunks + Zotero metadata
 
 RTX PC
 └─ Ollama
@@ -67,6 +68,14 @@ make ingest
 
 ```text
 rag_poc/index/chunks.sqlite3
+rag_poc/index/ingest_report.json
+```
+
+SQLiteの主なテーブル:
+
+```text
+chunks  PDF本文chunkとembedding
+papers  Zotero論文メタデータ
 ```
 
 ## 5. 質問する
@@ -95,6 +104,21 @@ make bot
 ```
 
 PDFを追加して `ingest.py` を再実行した後は、`bot.py` も再起動してください。
+
+## Zoteroメタデータ同期
+
+`.env` に `ZOTERO_LIBRARY_ID` と `ZOTERO_API_KEY` を入れてから:
+
+```bash
+cd /Users/kikuchikeito/projects/llm
+make zotero
+```
+
+接続確認だけ:
+
+```bash
+uv run python rag_poc/zotero_sync.py --limit 5 --dry-run
+```
 
 ## 次にやること
 

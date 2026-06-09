@@ -54,6 +54,11 @@ OLLAMA_EMBED_MODEL=nomic-embed-text
 PAPERBOT_TOP_K=6
 PAPERBOT_SHORT_TOP_K=3
 PAPERBOT_DEEP_TOP_K=8
+
+ZOTERO_LIBRARY_TYPE=group
+ZOTERO_LIBRARY_ID=1234567
+ZOTERO_API_KEY=...
+ZOTERO_SYNC_LIMIT=25
 ```
 
 ## 3. PDF/indexを置く
@@ -75,6 +80,20 @@ DS920+上で作り直す場合:
 ```bash
 docker compose -f docker-compose.nas.yml run --rm ingest
 ```
+
+Zotero Group Libraryのメタデータだけ同期する場合:
+
+```bash
+docker compose -f docker-compose.nas.yml run --rm zotero
+```
+
+接続確認だけなら:
+
+```bash
+docker compose -f docker-compose.nas.yml run --rm zotero python rag_poc/zotero_sync.py --limit 5 --dry-run
+```
+
+Zoteroメタデータは同じSQLiteの `papers` テーブルに保存されます。
 
 ## 4. 起動
 
