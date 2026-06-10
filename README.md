@@ -177,7 +177,9 @@ make zotero ZOTERO_ARGS="--all --download-pdfs"
 ```
 
 By default, unchanged PDFs are not printed one by one. Add `--verbose-pdfs` if
-you need a full per-PDF log.
+you need a full per-PDF log. Already downloaded PDFs and known no-PDF items are
+also skipped without checking child attachments again. Add `--refresh-pdf-metadata`
+when you want to re-check every Zotero item.
 
 PDFs are saved under:
 

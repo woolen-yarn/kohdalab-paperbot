@@ -431,6 +431,30 @@ def load_primary_by_dedupe_key(conn: sqlite3.Connection) -> dict[str, str]:
     return primary_by_key
 
 
+def attach_existing_pdf_state(conn: sqlite3.Connection, papers: list[dict]) -> None:
+    try:
+        rows = conn.execute(
+            """
+            SELECT zotero_key, pdf_status, pdf_path, pdf_attachment_key, pdf_md5
+            FROM papers
+            """
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return
+
+    state_by_key = {
+        row[0]: {
+            "pdf_status": row[1] or "",
+            "pdf_path": row[2] or "",
+            "pdf_attachment_key": row[3] or "",
+            "pdf_md5": row[4] or "",
+        }
+        for row in rows
+    }
+    for paper in papers:
+        paper.update(state_by_key.get(paper["zotero_key"], {}))
+
+
 def assign_duplicates(
     papers: list[dict], primary_by_key: dict[str, str]
 ) -> list[dict]:
@@ -658,9 +682,11 @@ def download_unique_pdfs(
     dry_run: bool = False,
     force: bool = False,
     verbose: bool = False,
+    refresh_metadata: bool = False,
 ) -> dict:
     report = {
         "checked": 0,
+        "skipped_known": 0,
         "downloaded": 0,
         "unchanged": 0,
         "no_pdf": 0,
@@ -669,8 +695,34 @@ def download_unique_pdfs(
 
     for paper in unique_papers:
         paper_key = paper["zotero_key"]
-        report["checked"] += 1
         title = paper["title"] or paper_key
+        pdf_status = paper.get("pdf_status") or ""
+        pdf_path = paper.get("pdf_path") or ""
+        if (
+            not dry_run
+            and not force
+            and not refresh_metadata
+            and pdf_status == "downloaded"
+            and pdf_path
+            and (PAPERS_DIR / pdf_path).exists()
+        ):
+            report["skipped_known"] += 1
+            if verbose:
+                print(f"PDF {paper_key}: skipped known downloaded {pdf_path}")
+            continue
+
+        if (
+            not dry_run
+            and not force
+            and not refresh_metadata
+            and pdf_status == "no_pdf"
+        ):
+            report["skipped_known"] += 1
+            if verbose:
+                print(f"PDF {paper_key}: skipped known no_pdf")
+            continue
+
+        report["checked"] += 1
         if verbose:
             print(f"PDF {paper_key}: {title}")
 
@@ -807,6 +859,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print unchanged/no-PDF entries during PDF sync.",
     )
+    parser.add_argument(
+        "--refresh-pdf-metadata",
+        action="store_true",
+        help="Check Zotero child attachments even for papers already marked downloaded/no_pdf.",
+    )
     return parser.parse_args()
 
 
@@ -838,6 +895,7 @@ def main() -> None:
                 dry_run=True,
                 force=args.force_pdf_download,
                 verbose=args.verbose_pdfs,
+                refresh_metadata=True,
             )
             print(f"PDF dry run: {pdf_report}")
         print("Dry run: SQLite was not updated.")
@@ -860,11 +918,13 @@ def main() -> None:
             upsert_paper(conn, paper)
 
         if args.download_pdfs:
+            attach_existing_pdf_state(conn, unique_papers)
             pdf_report = download_unique_pdfs(
                 conn,
                 unique_papers,
                 force=args.force_pdf_download,
                 verbose=args.verbose_pdfs,
+                refresh_metadata=args.refresh_pdf_metadata,
             )
             print(f"PDF sync: {pdf_report}")
 
