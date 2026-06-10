@@ -18,50 +18,83 @@ DS920+ is the always-on control plane. The RTX PC only runs Ollama and receives
 chat, translation, and embedding requests over the LAN.
 
 ```mermaid
-flowchart LR
-  subgraph external["External services"]
-    zotero["Zotero Group Library"]
-    feeds["arXiv / APS / Nature / AIP / Crossref"]
-    slack["Slack workspace"]
+flowchart TB
+  subgraph sources["Knowledge Sources"]
+    direction TB
+    zotero["Zotero Group Library\nmetadata + PDF attachments"]
+    feeds["New paper feeds\narXiv / APS / Nature / AIP / Crossref"]
   end
 
-  subgraph nas["Synology DS920+ /volume1/docker/paperbot"]
-    bot["paperbot container\nSlack DM RAG bot"]
-    sync["sync_zotero_pipeline.sh\nZotero sync + PDF ingest"]
-    watch["run_paper_watch.sh\nPaper Watch jobs"]
-    sqlite[("SQLite\nrag_poc/index/chunks.sqlite3")]
-    pdfs[("PDF archive\nrag_poc/papers/zotero")]
-    logs[("logs")]
+  subgraph nas["Synology DS920+ Control Plane\n/volume1/docker/paperbot"]
+    direction TB
+
+    subgraph jobs["Scheduled Jobs"]
+      sync["Paperbot 08:00 daily\nZotero sync + incremental ingest"]
+      watch["Paper Watch weekly/monthly\nrecommend new papers"]
+    end
+
+    subgraph app["Runtime Service"]
+      bot["paperbot container\nSlack Socket Mode RAG bot"]
+    end
+
+    subgraph state["Local Knowledge State"]
+      pdfs[("PDF archive\nrag_poc/papers/zotero")]
+      db[("SQLite knowledge DB\nchunks.sqlite3")]
+      profile["Lab interest profile\nmaterials / methods / physics"]
+      logs[("operation logs")]
+    end
   end
 
-  subgraph rtx["RTX PC / Ollama :11434"]
-    embed["nomic-embed-text\nembeddings"]
-    chat["gpt-oss:20b\nEnglish answer/commentary"]
-    translate["qwen3:14b\nJapanese translation"]
+  subgraph rtx["RTX PC AI Engine\nOllama http://10.32.145.143:11434"]
+    direction TB
+    embed["Embedding model\nnomic-embed-text"]
+    chat["Reasoning / commentary\ngpt-oss:20b"]
+    translate["Japanese translation\nqwen3:14b"]
   end
 
-  zotero -->|"metadata + attachment API"| sync
+  subgraph slack["Slack Workspace"]
+    direction TB
+    dm["DM with PaperBot\nRAG Q&A"]
+    paper["#paper\nnew paper recommendations"]
+    ops["#paperbot-log\nsync success / failure"]
+  end
+
+  zotero -->|"metadata + unique PDFs"| sync
+  feeds -->|"recent candidates"| watch
+
   sync --> pdfs
-  sync --> sqlite
-  sync -->|"embed chunks"| embed
-  sync -->|"success / failure"| slack
-
-  slack <-->|"DM / mention"| bot
-  bot --> sqlite
-  bot -->|"query embedding"| embed
-  bot -->|"answer generation"| chat
-  bot -->|"JA translation"| translate
-
-  feeds --> watch
-  watch -->|"deduplicate + score"| sqlite
-  watch -->|"candidate embedding"| embed
-  watch -->|"technical commentary"| chat
-  watch -->|"JA translation"| translate
-  watch -->|"one paper per post"| slack
-
+  sync --> db
+  sync --> profile
   sync --> logs
+  watch --> db
   watch --> logs
+  bot --> db
+
+  sync -->|"chunk embeddings"| embed
+  bot -->|"query embedding"| embed
+  watch -->|"candidate similarity"| embed
+  bot -->|"grounded answer"| chat
+  watch -->|"technical commentary"| chat
+  bot -->|"JA output"| translate
+  watch -->|"JA commentary"| translate
+
+  bot <-->|"questions + cited answers"| dm
+  watch -->|"one compact post per paper"| paper
+  sync -->|"daily status"| ops
+
+  classDef source fill:#fff7ed,stroke:#ea580c,color:#431407
+  classDef nas fill:#eff6ff,stroke:#2563eb,color:#172554
+  classDef state fill:#f8fafc,stroke:#64748b,color:#0f172a
+  classDef rtx fill:#ecfdf5,stroke:#059669,color:#064e3b
+  classDef slack fill:#f5f3ff,stroke:#7c3aed,color:#2e1065
+  class zotero,feeds source
+  class sync,watch,bot nas
+  class pdfs,db,profile,logs state
+  class embed,chat,translate rtx
+  class dm,paper,ops slack
 ```
+
+More detailed diagrams are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 The repository stores application code only. Local runtime data is intentionally
 ignored by Git:
