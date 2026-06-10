@@ -1483,6 +1483,7 @@ def strip_intro_label(text: str, label: str) -> str:
     cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
     cleaned = re.sub(r"^```(?:\w+)?\s*", "", cleaned)
     cleaned = re.sub(r"\s*```$", "", cleaned)
+    cleaned = cleaned.replace("**", "")
     cleaned = re.sub(rf"^{re.escape(label)}\s*:\s*", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip().strip('"').strip("'").strip()
 
@@ -1497,23 +1498,34 @@ def build_english_intro_prompt(item: dict) -> str:
             f"nearest indexed lab PDF similarity={item['rag_score']:.3f}; "
             f"nearest PDF={item['rag_source_label']} p.{page}"
         )
-    return f"""You are KohdaLab's Paper Watch assistant.
-Based only on the title and abstract below, write a compact technical note for researchers.
-Do not invent results, numbers, materials, or methods that are not in the abstract.
-Keep technical terms such as Rashba, Dresselhaus, spin-orbit, exciton, magnon, TRKR, PSH, and 2DEG in English.
-Use the relevance hints only to judge likely lab relevance; do not claim findings from the nearest lab PDF unless they also appear in the abstract.
+    return f"""You are an expert research assistant for KohdaLab.
+Read the title and abstract of the paper.
+Write a concise technical commentary in English for researchers.
 
-Output exactly four short fields on one line using this format:
-Material: ... | Method: ... | Physics: ... | New: ...
+Your explanation should answer:
+1. What problem is being addressed?
+2. What material, device, or physical system is studied?
+3. What experimental, theoretical, or computational methods are used?
+4. What is the main physical insight or discovery?
+5. What is genuinely new compared with prior work?
+6. Why might this result matter for future research or applications?
 
-Rules:
-- Material: name the material system, sample platform, or device structure. Use "not specified" if absent.
-- Method: name the experimental, computational, or analysis method. Use "not specified" if absent.
-- Physics: name the key physical mechanism or phenomenon.
-- New: state what appears new or notable, in cautious language.
-- Each field must be 3 to 12 words.
+Requirements:
+- Write a single coherent explanation.
+- Do not simply rewrite the abstract.
+- Emphasize the physics and scientific significance.
+- Mention important materials and measurement techniques when relevant.
+- Use 100-180 words total, including the final relevance section.
+- Assume the reader is a graduate student or researcher in physics, materials science, or electrical engineering.
+- If information is not available from the abstract, do not speculate.
+- Keep technical terms such as Rashba, Dresselhaus, spin-orbit, exciton, magnon, TRKR, PSH, and 2DEG in English.
+- Use the relevance hints only to judge likely lab relevance; do not claim findings from the nearest lab PDF unless they also appear in the abstract.
 - Do not include a label such as "EN:".
-- Do not use markdown bullets.
+- Do not use markdown bullets, numbered lists, bold text, or extra headings.
+
+Finally, add a short section:
+Relevance to our research:
+(1 sentence, maximum 35 words)
 
 Profile match terms: {reasons}
 RAG relevance hint: {rag_hint}
@@ -1529,13 +1541,15 @@ Abstract:
 
 
 def build_intro_translation_prompt(item: dict, english_intro: str) -> str:
-    return f"""Translate the English structured paper note into natural Japanese.
+    return f"""Translate the English technical commentary into natural Japanese.
 Do not add, remove, or change scientific claims.
 Preserve technical terms and proper nouns in English when appropriate.
 Keep Rashba, Dresselhaus, spin-orbit, exciton, magnon, TRKR, PSH, 2DEG, and material names as-is.
-Keep the same four-field structure and output exactly one line:
-材料: ... | 手法: ... | 物理: ... | 新規性: ...
-Use "不明" for "not specified".
+Keep the same structure, including the final section:
+Relevance to our research:
+Translate that heading as:
+研究室との関連:
+Write natural Japanese for graduate students or researchers.
 Do not include a label such as "JA:".
 
 Title:

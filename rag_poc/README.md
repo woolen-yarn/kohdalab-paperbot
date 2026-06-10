@@ -162,7 +162,7 @@ indexに照合した `rag_score` を組み合わせて候補を選びます。RS
 `pr`, `pr_ext`, `nature`, `nature_ext`, `aip`, `nano_2d`, `broad_high` の
 groupに分けてあり、Synologyのタスクスケジューラで週次arXiv、月次RSS groupの
 ように分散実行できます。Slackには1論文ずつ個別メッセージで投稿します。投稿文は英語解説を
-`PAPER_WATCH_SUMMARY_MODEL` が `Material / Method / Physics / New` の4項目で作り、
+`PAPER_WATCH_SUMMARY_MODEL` が100-180 words程度の研究者向けcommentaryとして作り、
 日本語化を `PAPER_WATCH_TRANSLATION_MODEL` で生成します。
 
 dry-run:
