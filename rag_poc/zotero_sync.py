@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = ROOT.parent
 INDEX_DIR = ROOT / "index"
 INDEX_DB_PATH = INDEX_DIR / "chunks.sqlite3"
+ZOTERO_SYNC_REPORT_PATH = INDEX_DIR / "zotero_sync_report.json"
 PAPERS_DIR = ROOT / "papers"
 ZOTERO_PDF_DIR = PAPERS_DIR / "zotero"
 
@@ -727,6 +728,13 @@ def print_sample(papers: list[dict]) -> None:
             print(f"    {authors}")
 
 
+def write_sync_report(report: dict) -> None:
+    ZOTERO_SYNC_REPORT_PATH.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 def fetch_children(item_key: str) -> list[dict]:
     data, _ = zotero_get(
         f"{library_base_path()}/items/{item_key}/children",
@@ -1125,9 +1133,26 @@ def main() -> None:
                 workers=args.pdf_workers,
             )
             print(f"PDF sync: {pdf_report}")
+        else:
+            pdf_report = {}
 
         if args.limit is None:
             set_sync_version(conn, latest_version)
+        write_sync_report(
+            {
+                "sync_mode": sync_mode,
+                "previous_version": previous_version,
+                "latest_version": latest_version,
+                "fetched_items": len(items),
+                "paper_like_items": len(papers),
+                "unique_papers": unique_count,
+                "duplicates": len(duplicates),
+                "skipped_items": skipped,
+                "deleted_items": deleted_count,
+                "pdf_report": pdf_report,
+                "synced_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+        )
         conn.commit()
     finally:
         if conn is not None:

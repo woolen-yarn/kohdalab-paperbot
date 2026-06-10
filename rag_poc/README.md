@@ -124,6 +124,19 @@ make bot
 
 PDFを追加して `ingest.py` を再実行した後は、`bot.py` も再起動してください。
 
+## Slack同期通知
+
+`#paperbot-log` のような通知用チャンネルを作り、PaperBotを招待してから `.env` に設定します。
+
+```text
+SYNC_NOTIFY_CHANNEL=#paperbot-log
+SYNC_NOTIFY_MODE=errors_only
+```
+
+`errors_only` は失敗時だけ通知します。`changes` は失敗時に加えて、新規論文/PDFがあった成功同期だけ通知します。
+もしSlack側で `channel_not_found` になる場合は、`#paperbot-log` ではなくチャンネルIDを
+`SYNC_NOTIFY_CHANNEL` に設定してください。
+
 ## Zoteroメタデータ同期
 
 `.env` に `ZOTERO_LIBRARY_ID` と `ZOTERO_API_KEY` を入れてから:

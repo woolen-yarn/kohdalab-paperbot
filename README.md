@@ -90,6 +90,31 @@ recent / 最近       Show recent PDFs on the local papers volume
 Slash-style text such as `/status` may be intercepted by Slack. Send plain
 `status`, `model`, `sources`, or their Japanese aliases instead.
 
+## Sync Notifications
+
+Create a Slack channel such as `#paperbot-log`, invite PaperBot to the channel,
+and set:
+
+```text
+SYNC_NOTIFY_CHANNEL=#paperbot-log
+SYNC_NOTIFY_MODE=errors_only
+```
+
+If Slack returns `channel_not_found`, set `SYNC_NOTIFY_CHANNEL` to the channel
+ID instead of the `#paperbot-log` name.
+
+Notification modes:
+
+```text
+silent       No sync notifications
+errors_only  Notify failures only
+changes      Notify failures and successful runs with changed papers/PDFs
+verbose      Notify every successful run too
+```
+
+Recommended start: `errors_only`. Switch to `changes` if you want to know when
+new papers or PDFs were picked up without seeing a message every day.
+
 ## Add Or Replace PDFs
 
 Put PDFs here:
@@ -234,7 +259,8 @@ sudo ./scripts/sync_zotero_pipeline.sh
 
 It checks Ollama, syncs Zotero metadata, downloads unique PDFs, ingests
 `rag_poc/papers/zotero/` incrementally, restarts PaperBot, and prints a count
-report. To force a full metadata refresh:
+report. It also sends Slack notifications according to `SYNC_NOTIFY_MODE`.
+To force a full metadata refresh:
 
 ```bash
 sudo ZOTERO_ARGS="--all --download-pdfs" ./scripts/sync_zotero_pipeline.sh
