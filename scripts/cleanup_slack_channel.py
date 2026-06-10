@@ -57,6 +57,21 @@ def slack_client() -> WebClient:
     return WebClient(token=token)
 
 
+def slack_scope_error(exc: SlackApiError, *, context: str, guidance: str) -> SystemExit:
+    error = exc.response.get("error", "unknown_error")
+    needed = exc.response.get("needed", "")
+    provided = exc.response.get("provided", "")
+    lines = [
+        f"Slack API failed while {context}: {error}",
+        guidance,
+    ]
+    if needed:
+        lines.append(f"needed: {needed}")
+    if provided:
+        lines.append(f"provided: {provided}")
+    return SystemExit("\n".join(lines))
+
+
 def resolve_channel_id(client: WebClient, channel: str) -> str:
     value = channel.strip()
     if not value:
@@ -67,12 +82,23 @@ def resolve_channel_id(client: WebClient, channel: str) -> str:
     name = value[1:] if value.startswith("#") else value
     cursor = None
     while True:
-        response = client.conversations_list(
-            types="public_channel,private_channel",
-            exclude_archived=True,
-            limit=1000,
-            cursor=cursor,
-        )
+        try:
+            response = client.conversations_list(
+                types="public_channel,private_channel",
+                exclude_archived=True,
+                limit=1000,
+                cursor=cursor,
+            )
+        except SlackApiError as exc:
+            raise slack_scope_error(
+                exc,
+                context="resolving the channel name",
+                guidance=(
+                    "Add Bot Token OAuth scope channels:read for public channels "
+                    "or groups:read for private channels, then reinstall the Slack app. "
+                    "Alternatively pass the channel ID such as C123... with --channel."
+                ),
+            ) from exc
         for item in response.get("channels", []):
             if item.get("name") == name:
                 return item["id"]
@@ -130,11 +156,22 @@ def collect_messages(
     matches: list[dict] = []
     cursor = None
     while len(matches) < limit:
-        response = client.conversations_history(
-            channel=channel_id,
-            limit=min(200, max(1, limit - len(matches))),
-            cursor=cursor,
-        )
+        try:
+            response = client.conversations_history(
+                channel=channel_id,
+                limit=min(200, max(1, limit - len(matches))),
+                cursor=cursor,
+            )
+        except SlackApiError as exc:
+            raise slack_scope_error(
+                exc,
+                context="reading channel history",
+                guidance=(
+                    "Add Bot Token OAuth scope channels:history for a public channel "
+                    "or groups:history for a private channel, then reinstall the Slack app. "
+                    "The bot also needs to be a member of the channel."
+                ),
+            ) from exc
         for message in response.get("messages", []):
             if not is_own_bot_message(message, user_id=user_id, bot_id=bot_id):
                 continue
@@ -180,12 +217,23 @@ def collect_replies(
     matches: list[dict] = []
     cursor = None
     while len(matches) < remaining:
-        response = client.conversations_replies(
-            channel=channel_id,
-            ts=thread_ts,
-            limit=min(200, remaining - len(matches)),
-            cursor=cursor,
-        )
+        try:
+            response = client.conversations_replies(
+                channel=channel_id,
+                ts=thread_ts,
+                limit=min(200, remaining - len(matches)),
+                cursor=cursor,
+            )
+        except SlackApiError as exc:
+            raise slack_scope_error(
+                exc,
+                context="reading thread replies",
+                guidance=(
+                    "Add Bot Token OAuth scope channels:history for public channel "
+                    "threads or groups:history for private channel threads, then reinstall "
+                    "the Slack app."
+                ),
+            ) from exc
         for message in response.get("messages", [])[1:]:
             if not is_own_bot_message(message, user_id=user_id, bot_id=bot_id):
                 continue

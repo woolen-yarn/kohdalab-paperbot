@@ -316,6 +316,18 @@ sudo ./scripts/cleanup_slack_channel.sh --channel "#paper" --limit 50 --delete
 The first command is a dry run and deletes nothing. The cleanup script only
 targets messages posted by the current bot token.
 
+Slack cleanup needs extra Bot Token OAuth scopes because it must read channel
+history before deleting bot-authored messages:
+
+- public channel such as `#paper`: `channels:read`, `channels:history`
+- private channel: `groups:read`, `groups:history`
+- deletion: existing `chat:write`
+
+After changing scopes in Slack App > OAuth & Permissions, reinstall the app to
+the workspace. If you pass a channel ID such as `C123...` instead of `#paper`,
+`channels:read` is not needed for name lookup, but `channels:history` is still
+needed to find the messages.
+
 Rebuild the whole RAG index only when needed:
 
 ```bash
