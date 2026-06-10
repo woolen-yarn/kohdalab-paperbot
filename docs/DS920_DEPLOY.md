@@ -113,6 +113,8 @@ docker compose -f docker-compose.nas.yml run --rm ingest
 
 PDFは `rag_poc/papers/zotero/` に保存されます。既に同じPDFがある場合は差分判定でスキップされます。
 通常ログでは unchanged PDF は1件ずつ表示しません。全部見たい場合だけ `--verbose-pdfs` を付けます。
+通常実行では取得済みPDFとPDFなし確認済みitemはZoteroのchild attachment確認もスキップします。
+全itemを再確認したい場合だけ `--refresh-pdf-metadata` を付けます。
 
 Zotero由来PDFだけでRAG indexを作る場合、初回だけ:
 
