@@ -48,6 +48,9 @@ run_or_notify compose run --rm zotero python rag_poc/zotero_sync.py $ZOTERO_ARGS
 step "Ingest Zotero PDFs"
 run_or_notify compose run --rm ingest python rag_poc/ingest.py $INGEST_ARGS
 
+step "Build lab interest profile"
+run_or_notify compose run --rm -T ingest python -m rag_poc.lab_profile
+
 if [ "${SKIP_RESTART:-0}" != "1" ]; then
   step "Restart PaperBot"
   run_or_notify compose restart paperbot

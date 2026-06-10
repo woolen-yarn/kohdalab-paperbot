@@ -10,6 +10,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
 
 from slack_sdk import WebClient
@@ -25,6 +26,7 @@ ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = ROOT.parent
 INDEX_DIR = ROOT / "index"
 INDEX_DB_PATH = INDEX_DIR / "chunks.sqlite3"
+LAB_PROFILE_PATH = INDEX_DIR / "lab_profile.json"
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
@@ -600,14 +602,40 @@ def summary_model() -> str:
     )
 
 
+@lru_cache(maxsize=1)
+def load_lab_profile_context() -> str:
+    if not LAB_PROFILE_PATH.exists():
+        return "not available"
+    try:
+        profile = json.loads(LAB_PROFILE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "not available"
+
+    categories = profile.get("categories", {})
+    labels = {
+        "materials": "Materials",
+        "methods": "Methods",
+        "physics": "Physics",
+    }
+    lines = []
+    for key, label in labels.items():
+        entries = categories.get(key, [])[:8]
+        names = [entry.get("label", "") for entry in entries if entry.get("label")]
+        if names:
+            lines.append(f"{label}: {', '.join(names)}")
+    return "\n".join(lines) if lines else "not available"
+
+
 def fallback_intro(item: dict, *, reason: str = "failed") -> str:
     if reason == "disabled":
-        ja_line = "JA: 日本語紹介文は無効化されています。Abstractを確認してください。"
+        en_line = "EN: Bilingual introduction is disabled; please open the linked paper."
+        ja_line = "JA: 日英紹介文は無効化されています。リンク先の論文を確認してください。"
     else:
-        ja_line = "JA: 日本語紹介文はLLM生成に失敗したため省略しました。Abstractを確認してください。"
+        en_line = "EN: Bilingual introduction failed; please open the linked paper."
+        ja_line = "JA: 日英紹介文の生成に失敗しました。リンク先の論文を確認してください。"
     return "\n".join(
         [
-            f"EN: {truncate(item['summary'], 260)}",
+            en_line,
             ja_line,
         ]
     )
@@ -615,6 +643,7 @@ def fallback_intro(item: dict, *, reason: str = "failed") -> str:
 
 def build_intro_prompt(item: dict) -> str:
     reasons = ", ".join(item["reasons"]) if item["reasons"] else "profile match"
+    lab_profile = load_lab_profile_context()
     rag_hint = "not used"
     if item.get("rag_score", 0) > 0 and item.get("rag_source_label"):
         page = item.get("rag_page_start") or "?"
@@ -634,6 +663,8 @@ JA: one concise Japanese sentence explaining why this may be relevant to the lab
 
 Profile match terms: {reasons}
 RAG relevance hint: {rag_hint}
+Lab profile from indexed PDFs:
+{lab_profile}
 
 Title:
 {item['title']}
@@ -661,9 +692,11 @@ def build_message(
     terms: dict[str, float] | None = None,
     include_intro: bool = True,
     use_rag_score: bool = False,
+    include_abstract: bool = False,
+    verbose: bool = False,
 ) -> str:
     lines = ["*Paper Watch / 新着論文紹介*"]
-    if terms:
+    if terms and verbose:
         lines.append(f"profile=`{profile_label(terms)}`")
         if use_rag_score:
             weight = env_float("PAPER_WATCH_RAG_WEIGHT", 8.0)
@@ -680,17 +713,12 @@ def build_message(
         if use_rag_score:
             score_parts.append(f"rag=`{item.get('rag_score', 0.0):.3f}`")
         score_parts.append(f"reasons=`{reasons}`")
-        lines.extend(
-            [
-                "",
-                f"*{index}. {item['title']}*",
-                f"{compact_authors(item['authors'])}",
-                " ".join(score_parts),
-                bilingual_intro(item, enabled=include_intro),
-                item["url"],
-                f"Abstract: {truncate(item['summary'], 360)}",
-            ]
-        )
+        lines.extend(["", f"*{index}. {item['title']}*", f"{compact_authors(item['authors'])}"])
+        if verbose:
+            lines.append(" ".join(score_parts))
+        lines.extend([bilingual_intro(item, enabled=include_intro), item["url"]])
+        if include_abstract:
+            lines.append(f"Abstract: {truncate(item['summary'], 360)}")
         if use_rag_score and item.get("rag_source_label"):
             page_start = item.get("rag_page_start") or "?"
             page_end = item.get("rag_page_end") or page_start
@@ -725,6 +753,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-score", type=float, default=env_float("PAPER_WATCH_MIN_SCORE", 6.0))
     parser.add_argument("--lookback-days", type=int, default=env_int("PAPER_WATCH_LOOKBACK_DAYS", 14))
     parser.add_argument("--no-summary", action="store_true", help="Skip LLM-generated bilingual intros.")
+    parser.add_argument("--include-abstract", action="store_true", help="Include abstracts in Slack output.")
+    parser.add_argument("--verbose-message", action="store_true", help="Include profile and score details in Slack output.")
     parser.add_argument(
         "--no-rag-score",
         action="store_true",
@@ -765,11 +795,19 @@ def main() -> None:
         candidates = select_candidates(conn, args.min_score, args.post_limit)
         if candidates:
             include_intro = env_bool("PAPER_WATCH_BILINGUAL_INTRO", True) and not args.no_summary
+            include_abstract = (
+                env_bool("PAPER_WATCH_INCLUDE_ABSTRACT", False) or args.include_abstract
+            )
+            verbose_message = (
+                env_bool("PAPER_WATCH_VERBOSE_MESSAGE", False) or args.verbose_message
+            )
             message = build_message(
                 candidates,
                 terms=terms,
                 include_intro=include_intro,
                 use_rag_score=use_rag_score,
+                include_abstract=include_abstract,
+                verbose=verbose_message,
             )
             print(message)
             if not args.dry_run and post_to_slack(message):

@@ -80,6 +80,8 @@ PAPER_WATCH_MAX_RESULTS=80
 PAPER_WATCH_POST_LIMIT=5
 PAPER_WATCH_MIN_SCORE=6
 PAPER_WATCH_BILINGUAL_INTRO=true
+PAPER_WATCH_INCLUDE_ABSTRACT=false
+PAPER_WATCH_VERBOSE_MESSAGE=false
 PAPER_WATCH_SUMMARY_MODEL=gpt-oss:20b
 PAPER_WATCH_USE_RAG_SCORE=true
 PAPER_WATCH_EMBED_MODEL=nomic-embed-text
@@ -94,7 +96,13 @@ PAPER_WATCH_RAG_MIN_TERM_SCORE=1
 Paper Watchは研究室プロファイル語の `term_score` に加えて、候補abstractをembeddingし、
 既存PDF RAG indexとの類似度 `rag_score` も使います。最終スコアは
 `term_score + rag_score * PAPER_WATCH_RAG_WEIGHT` です。
-投稿文の紹介はOllamaで日英併記生成します。
+投稿文の紹介はOllamaで日英併記生成します。通常のSlack投稿は軽量表示で、
+タイトル、著者、日英紹介、リンク、近い研究室PDFだけを表示します。
+`PAPER_WATCH_VERBOSE_MESSAGE=true` でスコア詳細、`PAPER_WATCH_INCLUDE_ABSTRACT=true`
+でAbstract表示を戻せます。
+Zotero同期パイプラインは、PDF ingest後に `rag_poc/index/lab_profile.json` と
+`rag_poc/index/lab_profile.md` も更新します。これは研究室の材料系、手法、物理
+トピックをRAG indexから抽出したPaper Watch用の裏側プロファイルです。
 
 PDF:
 
