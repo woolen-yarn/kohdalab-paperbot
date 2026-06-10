@@ -10,6 +10,6 @@ mkdir -p logs rag_poc/index
 
 {
   date '+===== %Y-%m-%d %H:%M:%S paper-watch start ====='
-  docker compose -f "$COMPOSE_FILE" run --rm paper-watch "$@"
+  docker compose -f "$COMPOSE_FILE" run --rm paper-watch python -m rag_poc.paper_watch "$@"
   date '+===== %Y-%m-%d %H:%M:%S paper-watch end ====='
 } 2>&1 | tee -a "$LOG_FILE"
