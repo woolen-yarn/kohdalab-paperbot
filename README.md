@@ -305,6 +305,17 @@ sudo tail -f /volume1/docker/paperbot/logs/paper_watch.log
 sudo docker logs -f kohdalab-paperbot
 ```
 
+Clean up PaperBot test posts in `#paper`:
+
+```bash
+cd /volume1/docker/paperbot
+sudo ./scripts/cleanup_slack_channel.sh --channel "#paper" --limit 50
+sudo ./scripts/cleanup_slack_channel.sh --channel "#paper" --limit 50 --delete
+```
+
+The first command is a dry run and deletes nothing. The cleanup script only
+targets messages posted by the current bot token.
+
 Rebuild the whole RAG index only when needed:
 
 ```bash

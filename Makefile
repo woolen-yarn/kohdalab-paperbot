@@ -26,4 +26,4 @@ bench:
 	uv run python scripts/benchmark_ollama_models.py --models $(MODELS)
 
 check:
-	uv run python -m py_compile bot.py rag_poc/ask.py rag_poc/ingest.py rag_poc/lab_profile.py rag_poc/ollama_client.py rag_poc/paper_watch.py rag_poc/sync_notify.py rag_poc/zotero_sync.py scripts/benchmark_ollama_models.py
+	uv run python -m py_compile bot.py rag_poc/ask.py rag_poc/ingest.py rag_poc/lab_profile.py rag_poc/ollama_client.py rag_poc/paper_watch.py rag_poc/sync_notify.py rag_poc/zotero_sync.py scripts/benchmark_ollama_models.py scripts/cleanup_slack_channel.py
