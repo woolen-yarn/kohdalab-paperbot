@@ -123,19 +123,24 @@ new papers or PDFs were picked up without seeing a message every day.
 
 ## Paper Watch
 
-Paper Watch finds recent arXiv and Crossref papers, scores them against the lab profile, and
+Paper Watch finds recent arXiv, Crossref, and journal RSS papers, scores them against the lab profile, and
 posts unposted relevant papers to Slack. Create or choose a channel such as
 `#paper`, invite PaperBot, and set:
 
 ```text
 PAPER_WATCH_CHANNEL=#paper
-PAPER_WATCH_SOURCES=arxiv,crossref
+PAPER_WATCH_SOURCES=arxiv,crossref,rss
 PAPER_WATCH_CONTACT_EMAIL=your-email@example.edu
 PAPER_WATCH_LOOKBACK_DAYS=14
 PAPER_WATCH_MAX_RESULTS=80
 PAPER_WATCH_CROSSREF_ROWS=10
 PAPER_WATCH_CROSSREF_MAX_QUERIES=2
 PAPER_WATCH_CROSSREF_SLEEP_SECONDS=1
+PAPER_WATCH_RSS_GROUPS=pr,nature,aip
+PAPER_WATCH_RSS_MAX_ITEMS_PER_FEED=20
+PAPER_WATCH_RSS_SLEEP_SECONDS=1
+PAPER_WATCH_RSS_CROSSREF_FALLBACK=true
+PAPER_WATCH_RSS_CROSSREF_FALLBACK_ROWS=10
 PAPER_WATCH_POST_LIMIT=5
 PAPER_WATCH_MIN_SCORE=6
 PAPER_WATCH_BILINGUAL_INTRO=true
@@ -153,6 +158,21 @@ PAPER_WATCH_RAG_CHUNKS_PER_SOURCE=2
 PAPER_WATCH_RAG_MIN_TERM_SCORE=1
 ```
 
+RSS sources are grouped so they can be scheduled separately:
+
+```text
+pr      Physical Review Letters, Physical Review B, Physical Review Applied
+nature  Nature Physics, Nature Communications, Communications Physics
+aip     Applied Physics Letters
+```
+
+RSS feeds are deliberately small and configurable. Override the built-in list
+when a publisher changes a URL:
+
+```text
+PAPER_WATCH_RSS_FEEDS=aps_prl|pr|Physical Review Letters|https://feeds.aps.org/rss/recent/prl.xml;nature_physics|nature|Nature Physics|https://www.nature.com/nphys.rss
+```
+
 Paper Watch scores papers with both profile terms and the existing lab RAG
 index. First it scores title/abstract matches against the research profile.
 Then it embeds each candidate abstract and compares it with representative
@@ -168,11 +188,15 @@ Paper Watchは、研究プロファイル語による `term_score` と、既存P
 `PAPER_WATCH_VERBOSE_MESSAGE=true` にすると `score`, `term`, `rag` などの詳細も
 表示します。`PAPER_WATCH_INCLUDE_ABSTRACT=true` にすると Abstract も表示します。
 
-Crossref access is deliberately conservative. By default, Paper Watch sends at
+Crossref and RSS access are deliberately conservative. By default, Paper Watch sends at
 most two Crossref queries per run, each with ten rows, and sleeps one second
-between Crossref requests. Set `PAPER_WATCH_CONTACT_EMAIL` so Crossref receives
+between Crossref requests. RSS reads at most 20 items per feed and also sleeps
+between feed requests. Set `PAPER_WATCH_CONTACT_EMAIL` so Crossref receives
 a polite `mailto` parameter and User-Agent. If Crossref returns `429` or another
-client-side 4XX response, Paper Watch stops Crossref fetching for that run.
+client-side 4XX response, Paper Watch stops Crossref fetching for that run. If
+an RSS feed returns `429` or a 4XX response, only that feed is skipped. AIP/APL
+RSS may be blocked by the publisher; when an RSS group has no entries, the
+optional fallback sends one conservative Crossref query for that journal group.
 
 The default profile includes topics such as Persistent Spin Helix, Rashba,
 Dresselhaus, spin diffusion, TRKR, semiconductor spintronics, 2D magnets,
@@ -194,7 +218,8 @@ rag_poc/index/lab_profile.json
 rag_poc/index/lab_profile.md
 ```
 
-The profile summarizes materials, methods, and physics topics found in the
+The profile summarizes materials, methods, physics topics, applications,
+frequent authors, and journals found in the
 indexed Zotero/RAG corpus and is used as hidden context for the bilingual
 paper introduction. Generate or refresh it manually with:
 
@@ -224,7 +249,26 @@ cd /volume1/docker/paperbot
 sudo ./scripts/run_paper_watch.sh
 ```
 
-For a DSM scheduled task, use root and run:
+Recommended DSM scheduled tasks:
+
+```bash
+# Weekly arXiv
+cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources arxiv
+
+# Monthly week 1: APS / Physical Review family
+cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups pr
+
+# Monthly week 2: Nature family
+cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups nature
+
+# Monthly week 3: AIP / Applied Physics Letters
+cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups aip
+
+# Optional monthly broad journal search through Crossref
+cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources crossref
+```
+
+For a single combined DSM scheduled task, use root and run:
 
 ```bash
 cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh
