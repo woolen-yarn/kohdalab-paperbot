@@ -602,6 +602,19 @@ def summary_model() -> str:
     )
 
 
+def paper_watch_translation_model() -> str:
+    return os.environ.get(
+        "PAPER_WATCH_TRANSLATION_MODEL",
+        os.environ.get("PAPERBOT_TRANSLATION_MODEL", ""),
+    ).strip()
+
+
+def paper_watch_translation_enabled() -> bool:
+    model = paper_watch_translation_model()
+    default = bool(model)
+    return bool(model) and env_bool("PAPER_WATCH_TRANSLATION_ENABLED", default)
+
+
 @lru_cache(maxsize=1)
 def load_lab_profile_context() -> str:
     if not LAB_PROFILE_PATH.exists():
@@ -641,7 +654,16 @@ def fallback_intro(item: dict, *, reason: str = "failed") -> str:
     )
 
 
-def build_intro_prompt(item: dict) -> str:
+def strip_intro_label(text: str, label: str) -> str:
+    cleaned = text.strip()
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r"^```(?:\w+)?\s*", "", cleaned)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    cleaned = re.sub(rf"^{re.escape(label)}\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip().strip('"').strip("'").strip()
+
+
+def build_english_intro_prompt(item: dict) -> str:
     reasons = ", ".join(item["reasons"]) if item["reasons"] else "profile match"
     lab_profile = load_lab_profile_context()
     rag_hint = "not used"
@@ -652,14 +674,13 @@ def build_intro_prompt(item: dict) -> str:
             f"nearest PDF={item['rag_source_label']} p.{page}"
         )
     return f"""You are KohdaLab's Paper Watch assistant.
-Based only on the title and abstract below, write a bilingual paper introduction.
+Based only on the title and abstract below, write an English paper introduction.
 Do not invent results, numbers, materials, or methods that are not in the abstract.
 Keep technical terms such as Rashba, Dresselhaus, spin-orbit, exciton, magnon, TRKR, PSH, and 2DEG in English.
 Use the relevance hints only to judge likely lab relevance; do not claim findings from the nearest lab PDF unless they also appear in the abstract.
 
-Format exactly:
-EN: one concise English sentence explaining why this may be relevant to the lab.
-JA: one concise Japanese sentence explaining why this may be relevant to the lab.
+Output exactly one concise English sentence explaining why this may be relevant to the lab.
+Do not include a label such as "EN:".
 
 Profile match terms: {reasons}
 RAG relevance hint: {rag_hint}
@@ -674,16 +695,54 @@ Abstract:
 """
 
 
+def build_intro_translation_prompt(item: dict, english_intro: str) -> str:
+    return f"""Translate the English paper introduction into natural Japanese.
+Do not add, remove, or change scientific claims.
+Preserve technical terms and proper nouns in English when appropriate.
+Keep Rashba, Dresselhaus, spin-orbit, exciton, magnon, TRKR, PSH, 2DEG, and material names as-is.
+Output exactly one Japanese sentence. Do not include a label such as "JA:".
+
+Title:
+{item['title']}
+
+English introduction:
+{english_intro}
+
+Japanese introduction:
+"""
+
+
 def bilingual_intro(item: dict, *, enabled: bool) -> str:
     if not enabled:
         return fallback_intro(item, reason="disabled")
     try:
-        text = generate(build_intro_prompt(item), summary_model(), timeout=180).strip()
+        english_intro = strip_intro_label(
+            generate(build_english_intro_prompt(item), summary_model(), timeout=180),
+            "EN",
+        )
     except OllamaError:
         return fallback_intro(item)
-    if "EN:" not in text or "JA:" not in text:
+    if not english_intro:
         return fallback_intro(item)
-    return text
+
+    japanese_intro = ""
+    if paper_watch_translation_enabled():
+        try:
+            japanese_intro = strip_intro_label(
+                generate(
+                    build_intro_translation_prompt(item, english_intro),
+                    paper_watch_translation_model(),
+                    timeout=180,
+                ),
+                "JA",
+            )
+        except OllamaError:
+            japanese_intro = ""
+
+    if not japanese_intro:
+        japanese_intro = "日本語紹介文の生成に失敗しました。リンク先の論文を確認してください。"
+
+    return f"EN: {english_intro}\nJA: {japanese_intro}"
 
 
 def build_message(

@@ -8,9 +8,9 @@ from functools import lru_cache
 from pathlib import Path
 
 try:
-    from .ollama_client import embed, generate
+    from .ollama_client import OllamaError, embed, generate
 except ImportError:
-    from ollama_client import embed, generate
+    from ollama_client import OllamaError, embed, generate
 
 
 ROOT = Path(__file__).resolve().parent
@@ -18,6 +18,7 @@ INDEX_DB_PATH = ROOT / "index" / "chunks.sqlite3"
 
 CHAT_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:8b")
 EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+TRANSLATION_MODEL = os.environ.get("PAPERBOT_TRANSLATION_MODEL", "").strip()
 TOP_K = int(os.environ.get("PAPERBOT_TOP_K", "6"))
 SHORT_TOP_K = int(os.environ.get("PAPERBOT_SHORT_TOP_K", "3"))
 DEEP_TOP_K = int(os.environ.get("PAPERBOT_DEEP_TOP_K", "8"))
@@ -94,6 +95,17 @@ CANONICAL_CASE_PATTERNS = (
     (re.compile(r"\btrkr\b", re.IGNORECASE), "TRKR"),
     (re.compile(r"\bgaas\b", re.IGNORECASE), "GaAs"),
 )
+
+
+def env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "on"}
+
+
+def translation_enabled() -> bool:
+    return bool(TRANSLATION_MODEL) and env_bool("PAPERBOT_TRANSLATION_ENABLED", True)
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -192,6 +204,63 @@ def answer_language(question: str) -> str:
     if JAPANESE_RE.search(question):
         return "ja"
     return "en"
+
+
+def strip_translation_output(text: str) -> str:
+    cleaned = text.strip()
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r"^```(?:\w+)?\s*", "", cleaned)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    cleaned = re.sub(r"^(?:English|英訳|Translation|翻訳)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^(?:Japanese|日本語訳|翻訳)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip().strip('"').strip("'").strip()
+
+
+def canonical_terms_text() -> str:
+    return ", ".join(CANONICAL_TERMS)
+
+
+def translate_question_to_english(question: str) -> str:
+    prompt = f"""Translate the following Japanese research question into concise English for literature search and RAG.
+Output only the English question. Do not answer the question.
+Preserve technical terms and proper nouns in English when possible.
+Keep these terms exactly when they appear or are implied:
+{canonical_terms_text()}
+
+Japanese question:
+{question}
+
+English question:
+"""
+    return strip_translation_output(generate(prompt, TRANSLATION_MODEL, timeout=120))
+
+
+def translate_answer_to_japanese(
+    *,
+    original_question: str,
+    english_question: str,
+    english_answer: str,
+) -> str:
+    prompt = f"""Translate the English answer into natural Japanese for a physics research lab.
+Do not add, remove, or change scientific claims.
+Preserve all source citations exactly, such as (S1), (S2), and [S1].
+Preserve technical terms and proper nouns in English when appropriate.
+Do not translate, katakana-ize, paraphrase, or mis-convert these terms:
+{canonical_terms_text()}
+Use Rashba, Dresselhaus, SU(2), 2DEG, TRKR, GaAs, PSH, and spin-orbit interaction as-is.
+
+Original Japanese question:
+{original_question}
+
+English question used for RAG:
+{english_question}
+
+English answer:
+{english_answer}
+
+Japanese answer:
+"""
+    return clean_answer(strip_translation_output(generate(prompt, TRANSLATION_MODEL, timeout=180)))
 
 
 @lru_cache(maxsize=1)
@@ -523,15 +592,40 @@ def format_source_ids(contexts: list[dict]) -> str:
 
 
 def answer_question(question: str) -> tuple[str, list[dict]]:
+    language = answer_language(question)
+    core_question = question
+    translate_back = False
+
+    if language == "ja" and translation_enabled():
+        try:
+            translated_question = translate_question_to_english(question)
+        except OllamaError:
+            translated_question = ""
+        if translated_question:
+            core_question = translated_question
+            translate_back = True
+
     chunks = list(load_chunks())
-    contexts = search(question, chunks, select_top_k(question))
-    answer = generate(build_prompt(question, contexts), CHAT_MODEL)
+    contexts = search(core_question, chunks, select_top_k(question))
+    answer = generate(build_prompt(core_question, contexts), CHAT_MODEL)
     answer = clean_answer(answer)
     if not answer.strip():
-        answer = generate(build_empty_answer_retry_prompt(question, contexts), CHAT_MODEL)
+        answer = generate(build_empty_answer_retry_prompt(core_question, contexts), CHAT_MODEL)
         answer = clean_answer(answer)
     if not answer.strip():
         answer = fallback_empty_answer(question)
+
+    if translate_back and answer.strip():
+        try:
+            translated_answer = translate_answer_to_japanese(
+                original_question=question,
+                english_question=core_question,
+                english_answer=answer,
+            )
+        except OllamaError:
+            translated_answer = ""
+        if translated_answer:
+            answer = translated_answer
     return answer, contexts
 
 
