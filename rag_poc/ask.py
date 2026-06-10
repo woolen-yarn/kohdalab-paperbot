@@ -159,6 +159,34 @@ def normalize_technical_terms(answer: str) -> str:
     return normalized
 
 
+def normalize_source_references(answer: str) -> str:
+    normalized = answer
+    normalized = re.sub(
+        r"\(\s*(S\d+)\s*:\s*Source\s+S\d+\s*\)",
+        r"(\1)",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"\[\s*(S\d+)\s*:\s*Source\s+S\d+\s*\]",
+        r"[\1]",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"\b(S\d+)\s*:\s*Source\s+S\d+\b",
+        r"\1",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(r"\bSource\s+(S\d+)\b", r"\1", normalized, flags=re.IGNORECASE)
+    return normalized
+
+
+def clean_answer(answer: str) -> str:
+    return normalize_source_references(normalize_technical_terms(answer))
+
+
 @lru_cache(maxsize=1)
 def load_chunks() -> tuple[dict, ...]:
     if not INDEX_DB_PATH.exists():
@@ -335,7 +363,7 @@ def answer_style_instruction(question: str) -> str:
     if is_short_question(question):
         return (
             "回答は1文だけにしてください。"
-            "前置きや箇条書きは不要です。文末に根拠Source IDを付けてください。"
+            "前置きや箇条書きは不要です。文末に根拠を (S1) のように付けてください。"
         )
     return (
         "質問に必要な範囲で簡潔に答えてください。"
@@ -357,7 +385,8 @@ def build_prompt(question: str, contexts: list[dict]) -> str:
     return f"""あなたはKohdaLabの研究室PaperBotです。
 以下の文献抜粋だけを根拠に、日本語で答えてください。
 根拠が足りない場合は「この10本のPDF内では十分な根拠が見つかりません」と言ってください。
-回答では、根拠を必ず S1, S2 のようなSource IDで示してください。
+回答では、根拠を必ず (S1), (S2) のようなSource IDだけで示してください。
+「Source S1」「S1: Source S3」「Source ID」などの語句は回答に書かないでください。
 PDF本文中に出てくる [12], [27] のような引用番号は、回答の根拠番号として使わないでください。
 抜粋に書かれていない論文番号、著者名、材料、応用例を推測で追加しないでください。
 {style_instruction}
@@ -431,10 +460,10 @@ def answer_question(question: str) -> tuple[str, list[dict]]:
     chunks = list(load_chunks())
     contexts = search(question, chunks, select_top_k(question))
     answer = generate(build_prompt(question, contexts), CHAT_MODEL)
-    answer = normalize_technical_terms(answer)
+    answer = clean_answer(answer)
     if not answer.strip():
         answer = generate(build_empty_answer_retry_prompt(question, contexts), CHAT_MODEL)
-        answer = normalize_technical_terms(answer)
+        answer = clean_answer(answer)
     if not answer.strip():
         answer = fallback_empty_answer()
     return answer, contexts
