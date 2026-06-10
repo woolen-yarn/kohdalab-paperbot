@@ -147,7 +147,13 @@ PAPER_WATCH_LOOKBACK_DAYS=14
 PAPER_WATCH_MAX_RESULTS=80
 PAPER_WATCH_POST_LIMIT=5
 PAPER_WATCH_MIN_SCORE=6
+PAPER_WATCH_BILINGUAL_INTRO=true
+PAPER_WATCH_SUMMARY_MODEL=gpt-oss:20b
 ```
+
+現状のPaper WatchはRAG類似度ではなく、研究室プロファイル語のterm scoreで候補を選びます。
+投稿文はOllamaでEN/JAの紹介文を生成します。
+将来的には候補abstractをembeddingして、PDF RAG indexとの類似度もscoreに足せます。
 
 dry-run:
 
