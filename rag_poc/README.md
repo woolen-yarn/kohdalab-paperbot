@@ -1,6 +1,8 @@
 # KohdaLab PaperBot RAG PoC
 
 Mac上でPDF 10本を対象にした最小RAGを動かすためのPoCです。
+Questions and answers can be Japanese or English.
+質問と回答は日本語・英語どちらにも対応します。
 
 構成:
 
@@ -87,6 +89,7 @@ chunks  PDF本文chunkとembedding
 pdf_documents  PDFごとのsha256/status/chunk_count
 papers  Zotero論文メタデータ
 unique_papers  重複を除いたZotero論文メタデータview
+zotero_sync_state  Zotero差分同期用library version
 ```
 
 `chunks.source` が `papers.pdf_path` と一致する場合、回答のSourcesはPDFファイル名ではなく
@@ -130,18 +133,20 @@ make zotero
 
 Zotero同期は `zotero_key` でupsertします。同じ論文が複数itemとして登録されている場合は、
 DOIまたは正規化title+yearでduplicate判定し、`duplicate_of` に代表itemを記録します。
+初回の通常同期は全top-level metadataを取得し、2回目以降はZotero library versionの
+`since` parameterで差分metadataだけを取得します。
 
 代表itemだけ添付PDFを取得する場合:
 
 ```bash
-make zotero ZOTERO_ARGS="--all --download-pdfs"
+make zotero ZOTERO_ARGS="--download-pdfs"
 make ingest INGEST_ARGS="--rebuild --source-prefix zotero/"
 ```
 
 以後の差分更新:
 
 ```bash
-make zotero ZOTERO_ARGS="--all --download-pdfs"
+make zotero ZOTERO_ARGS="--download-pdfs"
 make ingest INGEST_ARGS="--source-prefix zotero/"
 ```
 
@@ -152,6 +157,8 @@ rag_poc/papers/zotero/
 ```
 
 PDF取得も差分更新です。既に同じPDFが保存されている場合は再ダウンロードしません。
+通常の差分同期では、新規または変更された代表itemだけPDF添付を確認します。
+全itemのPDF添付を確認し直したい場合だけ `--refresh-pdf-metadata` を付けます。
 
 接続確認だけ:
 

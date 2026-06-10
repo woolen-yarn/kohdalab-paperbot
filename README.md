@@ -1,6 +1,8 @@
 # KohdaLab PaperBot MVP
 
 Slack DMからMac上のPDF RAGを呼び、RTX PCのOllamaで回答する最小構成です。
+PaperBot supports Japanese and English questions, commands, and answers.
+PaperBotは日本語・英語の質問、コマンド、回答に対応します。
 
 GitHub:
 
@@ -65,7 +67,8 @@ Open a DM with PaperBot and send a question, for example:
 Persistent Spin Helixに関係する内容を教えて
 ```
 
-The bot should reply with an answer and short `Sources` such as `S1, S2, S3`.
+The bot should reply in the same language as the question, with an answer and
+short `Sources` such as `S1, S2, S3`.
 Send `sources` to show the full source list from your previous answer. When a
 PDF came from Zotero, source entries use Zotero metadata such as title, year,
 first author, and journal instead of only the PDF filename.
@@ -77,14 +80,15 @@ In DM, PaperBot replies as normal sequential messages. In channel mentions, it r
 PaperBot understands these commands in DM or mention replies:
 
 ```text
-/help      Show available commands
-/model     Show current Ollama chat/embedding model settings
-/status    Show DB counts and Ollama connectivity
-/sources   Show sources from your previous answer in the same DM/channel
-/recent    Show recent PDFs on the local papers volume
+help / ヘルプ       Show available commands
+model / モデル      Show current Ollama chat/embedding model settings
+status / 状態       Show DB counts, Zotero sync state, and Ollama connectivity
+sources / 根拠      Show sources from your previous answer in the same DM/channel
+recent / 最近       Show recent PDFs on the local papers volume
 ```
 
-If Slack intercepts slash-style text, send the command without `/`, for example `model` or `sources`.
+Slash-style text such as `/status` may be intercepted by Slack. Send plain
+`status`, `model`, `sources`, or their Japanese aliases instead.
 
 ## Add Or Replace PDFs
 
@@ -143,16 +147,20 @@ Set Zotero credentials in `.env`:
 ZOTERO_LIBRARY_TYPE=group
 ZOTERO_LIBRARY_ID=1234567
 ZOTERO_API_KEY=...
-ZOTERO_SYNC_LIMIT=25
-ZOTERO_PDF_WORKERS=4
+ZOTERO_PDF_WORKERS=1
 ```
 
-Then fetch recent top-level Zotero items and save paper metadata into SQLite:
+Then sync Zotero metadata into SQLite:
 
 ```bash
 cd /Users/kikuchikeito/projects/llm
 make zotero
 ```
+
+The first normal sync fetches all top-level metadata and stores Zotero's library
+version in `zotero_sync_state`. Later normal syncs use Zotero's `since` version
+parameter and fetch only changed metadata. This avoids calling the Zotero API for
+every paper on every run.
 
 For a connection-only check without writing to SQLite:
 
@@ -174,15 +182,15 @@ view when you want only representative paper records.
 To download attached PDFs for representative papers only:
 
 ```bash
-make zotero ZOTERO_ARGS="--all --download-pdfs"
+make zotero ZOTERO_ARGS="--download-pdfs"
 ```
 
-By default, unchanged PDFs are not printed one by one. Add `--verbose-pdfs` if
-you need a full per-PDF log. Already downloaded PDFs and known no-PDF items are
-also skipped without checking child attachments again. Add `--refresh-pdf-metadata`
-when you want to re-check every Zotero item. New or unknown PDF items are checked
-in parallel. Tune this with `ZOTERO_PDF_WORKERS` or `--pdf-workers`; `2` to `4`
-is usually a good range on the DS920+.
+On normal incremental runs, PaperBot checks PDF attachments only for new or
+changed representative papers. Already downloaded PDFs and known no-PDF items
+are skipped without checking child attachments again. Add `--refresh-pdf-metadata`
+only when you intentionally want to re-check every Zotero item. The default PDF
+worker count is `1` to avoid hitting Zotero too aggressively; increase it
+manually only for large first-time imports.
 
 PDFs are saved under:
 
@@ -219,10 +227,16 @@ sudo ./scripts/sync_zotero_pipeline.sh
 
 It checks Ollama, syncs Zotero metadata, downloads unique PDFs, ingests
 `rag_poc/papers/zotero/` incrementally, restarts PaperBot, and prints a count
-report. To temporarily change PDF parallelism:
+report. To force a full metadata refresh:
 
 ```bash
-sudo ZOTERO_ARGS="--all --download-pdfs --pdf-workers 2" ./scripts/sync_zotero_pipeline.sh
+sudo ZOTERO_ARGS="--all --download-pdfs" ./scripts/sync_zotero_pipeline.sh
+```
+
+To re-check every PDF attachment intentionally:
+
+```bash
+sudo ZOTERO_ARGS="--download-pdfs --refresh-pdf-metadata" ./scripts/sync_zotero_pipeline.sh
 ```
 
 To force a first-time Zotero-only rebuild:

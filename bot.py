@@ -107,8 +107,8 @@ def format_rag_message(answer: str, sources: str) -> str:
             + "\n... sources truncated. Send `sources` for the full list."
         )
     return (
-        f"*Answer*\n{clean_answer}\n\n"
-        f"*Sources*\n```{clean_sources}```"
+        f"*Answer / 回答*\n{clean_answer}\n\n"
+        f"*Sources / 根拠*\n```{clean_sources}```"
     )
 
 
@@ -141,14 +141,19 @@ def latest_papers(limit: int = 8) -> list[Path]:
 def command_help() -> str:
     return "\n".join(
         [
-            "*PaperBot commands*",
-            "`/help`  このヘルプを表示",
-            "`/model`  現在のLLM/embedding設定を表示",
-            "`/status`  DB件数とOllama疎通を表示",
-            "`/sources`  直前の回答で使ったSourcesをもう一度表示",
-            "`/recent`  NAS上の最近のPDFを表示",
+            "*PaperBot commands / コマンド*",
+            "`help` / `ヘルプ`  Show this help / このヘルプを表示",
+            "`model` / `モデル`  Show LLM and embedding settings / LLM・embedding設定を表示",
+            "`status` / `状態`  Show DB counts and Ollama health / DB件数とOllama疎通を表示",
+            "`sources` / `根拠`  Show the previous source list / 直前のSourcesを表示",
+            "`recent` / `最近`  Show recent local PDFs / 最近のPDFを表示",
             "",
-            "通常の質問はそのまま送ってください。例: `Persistent Spin Helixについて一文で教えて`",
+            "Slash-style text such as `/status` may be intercepted by Slack, so plain `status` is recommended.",
+            "Slackが `/status` を吸収することがあるので、通常は `status` と送ってください。",
+            "",
+            "Ask normally in Japanese or English. / 日本語・英語どちらでも質問できます。",
+            "Example: `Persistent Spin Helixについて一文で教えて`",
+            "Example: `Explain Persistent Spin Helix in one sentence.`",
         ]
     )
 
@@ -156,7 +161,7 @@ def command_help() -> str:
 def command_model() -> str:
     return "\n".join(
         [
-            "*Current model settings*",
+            "*Current model settings / 現在のモデル設定*",
             f"`OLLAMA_BASE_URL`: `{os.environ.get('OLLAMA_BASE_URL', 'default')}`",
             f"`OLLAMA_CHAT_MODEL`: `{CHAT_MODEL}`",
             f"`OLLAMA_EMBED_MODEL`: `{EMBED_MODEL}`",
@@ -202,7 +207,7 @@ def ollama_status() -> str:
 
 
 def command_status() -> str:
-    lines = ["*PaperBot status*"]
+    lines = ["*PaperBot status / 状態*"]
     lines.append(f"Ollama: {ollama_status()}")
 
     if not INDEX_DB_PATH.exists():
@@ -236,6 +241,13 @@ def command_status() -> str:
                 f"Zotero PDFs: downloaded=`{downloaded}` no_pdf=`{no_pdf}` failed=`{failed_pdf}`"
             )
 
+        if table_exists(conn, "zotero_sync_state"):
+            row = conn.execute(
+                "SELECT version, synced_at FROM zotero_sync_state ORDER BY synced_at DESC LIMIT 1"
+            ).fetchone()
+            if row:
+                lines.append(f"Zotero sync state: version=`{row[0]}` synced_at=`{row[1]}`")
+
         if table_exists(conn, "chunks"):
             chunks = scalar(conn, "SELECT COUNT(*) FROM chunks")
             lines.append(f"RAG chunks: `{chunks}`")
@@ -264,19 +276,25 @@ def command_status() -> str:
 def command_sources(channel: str, user: str) -> str:
     result = LAST_RESULTS.get((channel, user))
     if not result:
-        return "まだこのDMで回答履歴がありません。先に質問を送ってください。"
+        return (
+            "No previous answer in this DM/channel yet.\n"
+            "まだこのDM/チャンネルでは回答履歴がありません。先に質問を送ってください。"
+        )
     return (
-        f"*Last question*\n{result.question}\n\n"
+        f"*Last question / 直前の質問*\n{result.question}\n\n"
         f"*Model*: `{result.model}` / `{result.duration:.2f}s`\n\n"
-        f"*Sources*\n```{result.sources}```"
+        f"*Sources / 根拠*\n```{result.sources}```"
     )
 
 
 def command_recent() -> str:
     papers = latest_papers()
     if not papers:
-        return "NAS上の `rag_poc/papers` にPDFがまだ見つかりません。"
-    lines = ["*Recent PDFs*"]
+        return (
+            "No PDFs found under `rag_poc/papers` yet.\n"
+            "NAS上の `rag_poc/papers` にPDFがまだ見つかりません。"
+        )
+    lines = ["*Recent PDFs / 最近のPDF*"]
     for i, path in enumerate(papers, start=1):
         source = path.relative_to(PAPERS_DIR).as_posix()
         lines.append(f"{i}. {source}")
@@ -285,18 +303,21 @@ def command_recent() -> str:
 
 def handle_command(text: str, channel: str, user: str) -> str | None:
     command = text.strip().split(maxsplit=1)[0].lower()
-    if command in {"/help", "help"}:
+    if command in {"/help", "help", "ヘルプ", "使い方"}:
         return command_help()
-    if command in {"/model", "model"}:
+    if command in {"/model", "model", "モデル"}:
         return command_model()
-    if command in {"/status", "status"}:
+    if command in {"/status", "status", "stat", "状態", "ステータス"}:
         return command_status()
-    if command in {"/sources", "sources"}:
+    if command in {"/sources", "sources", "source", "根拠", "出典"}:
         return command_sources(channel, user)
-    if command in {"/recent", "recent"}:
+    if command in {"/recent", "recent", "最近"}:
         return command_recent()
     if command.startswith("/"):
-        return "未知のコマンドです。`/help` を見てください。"
+        return (
+            "Unknown command. Send `help`.\n"
+            "未知のコマンドです。`help` を見てください。"
+        )
     return None
 
 
@@ -331,7 +352,7 @@ def reply_with_rag(
         post_message(client, channel, command_response, thread_ts)
         return
 
-    post_message(client, channel, "PDFを検索しています...", thread_ts)
+    post_message(client, channel, "Searching PDFs... / PDFを検索しています...", thread_ts)
 
     try:
         result = ask_rag(question)
@@ -344,7 +365,7 @@ def reply_with_rag(
             CHAT_MODEL,
             question,
         )
-        answer = f"RAG処理でエラーが出ました: `{e}`"
+        answer = f"RAG error / RAG処理エラー: `{e}`"
     else:
         LAST_RESULTS[(channel, user)] = result
         logger.info(
@@ -382,7 +403,11 @@ def handle_mention(event, client):
         client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,
-            text="質問を書いてください。例: `@PaperBot PSHとは何ですか？`",
+            text=(
+                "Please include a question. / 質問を書いてください。\n"
+                "Example: `@PaperBot What is PSH?`\n"
+                "例: `@PaperBot PSHとは何ですか？`"
+            ),
         )
         return
 
