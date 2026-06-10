@@ -137,6 +137,24 @@ SYNC_NOTIFY_MODE=errors_only
 もしSlack側で `channel_not_found` になる場合は、`#paperbot-log` ではなくチャンネルIDを
 `SYNC_NOTIFY_CHANNEL` に設定してください。
 
+## Paper Watch
+
+arXivから新着論文を拾い、研究室プロファイルに合うものだけ `#paper` に投稿します。
+
+```text
+PAPER_WATCH_CHANNEL=#paper
+PAPER_WATCH_LOOKBACK_DAYS=14
+PAPER_WATCH_MAX_RESULTS=80
+PAPER_WATCH_POST_LIMIT=5
+PAPER_WATCH_MIN_SCORE=6
+```
+
+dry-run:
+
+```bash
+make paper-watch PAPER_WATCH_ARGS=--dry-run
+```
+
 ## Zoteroメタデータ同期
 
 `.env` に `ZOTERO_LIBRARY_ID` と `ZOTERO_API_KEY` を入れてから:

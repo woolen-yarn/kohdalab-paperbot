@@ -1,4 +1,4 @@
-.PHONY: bot ingest ask zotero bench check
+.PHONY: bot ingest ask zotero paper-watch bench check
 
 MODELS ?= qwen3:8b gemma4:12b gpt-oss:20b
 INGEST_ARGS ?=
@@ -16,8 +16,11 @@ ask:
 zotero:
 	uv run python rag_poc/zotero_sync.py $(ZOTERO_ARGS)
 
+paper-watch:
+	uv run python -m rag_poc.paper_watch $(PAPER_WATCH_ARGS)
+
 bench:
 	uv run python scripts/benchmark_ollama_models.py --models $(MODELS)
 
 check:
-	uv run python -m py_compile bot.py rag_poc/ask.py rag_poc/ingest.py rag_poc/ollama_client.py rag_poc/sync_notify.py rag_poc/zotero_sync.py scripts/benchmark_ollama_models.py
+	uv run python -m py_compile bot.py rag_poc/ask.py rag_poc/ingest.py rag_poc/ollama_client.py rag_poc/paper_watch.py rag_poc/sync_notify.py rag_poc/zotero_sync.py scripts/benchmark_ollama_models.py

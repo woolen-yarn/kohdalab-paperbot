@@ -115,6 +115,42 @@ verbose      Notify every successful run too
 Recommended start: `errors_only`. Switch to `changes` if you want to know when
 new papers or PDFs were picked up without seeing a message every day.
 
+## Paper Watch
+
+Paper Watch finds recent arXiv papers, scores them against the lab profile, and
+posts unposted relevant papers to Slack. Create or choose a channel such as
+`#paper`, invite PaperBot, and set:
+
+```text
+PAPER_WATCH_CHANNEL=#paper
+PAPER_WATCH_LOOKBACK_DAYS=14
+PAPER_WATCH_MAX_RESULTS=80
+PAPER_WATCH_POST_LIMIT=5
+PAPER_WATCH_MIN_SCORE=6
+```
+
+Run a dry run locally:
+
+```bash
+make paper-watch PAPER_WATCH_ARGS=--dry-run
+```
+
+Run on the NAS:
+
+```bash
+cd /volume1/docker/paperbot
+sudo ./scripts/run_paper_watch.sh
+```
+
+For a DSM scheduled task, use root and run:
+
+```bash
+cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh
+```
+
+If Slack returns `channel_not_found`, set `PAPER_WATCH_CHANNEL` to the channel
+ID instead of the `#paper` name.
+
 ## Add Or Replace PDFs
 
 Put PDFs here:
@@ -314,6 +350,7 @@ requirements.txt
 scripts/deploy_nas.sh
 scripts/reindex_nas.sh
 scripts/sync_zotero_pipeline.sh
+scripts/run_paper_watch.sh
 ```
 
 ## Check RTX PC Ollama
