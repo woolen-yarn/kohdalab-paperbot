@@ -81,6 +81,13 @@ DS920+上で作り直す場合:
 docker compose -f docker-compose.nas.yml run --rm ingest
 ```
 
+通常の `ingest` は差分更新です。既存PDFはsha256でスキップされ、完全重複PDFは二重にembeddingされません。
+chunk設定やembeddingモデルを変えて全PDFを作り直す場合だけ:
+
+```bash
+docker compose -f docker-compose.nas.yml run --rm ingest python rag_poc/ingest.py --rebuild
+```
+
 Zotero Group Libraryのメタデータだけ同期する場合:
 
 ```bash
@@ -94,6 +101,8 @@ docker compose -f docker-compose.nas.yml run --rm zotero python rag_poc/zotero_s
 ```
 
 Zoteroメタデータは同じSQLiteの `papers` テーブルに保存されます。
+同一論文が複数Zotero itemとして登録されている場合は、DOIまたはtitle+yearでduplicate判定されます。
+重複を除いた一覧はSQLite viewの `unique_papers` を使います。
 
 ## 4. 起動
 

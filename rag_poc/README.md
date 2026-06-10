@@ -64,6 +64,15 @@ cd /Users/example/projects/llm
 make ingest
 ```
 
+`make ingest` は差分更新です。既に取り込まれている同一PDFはsha256でスキップし、
+完全重複PDFは記録だけしてembeddingを重複作成しません。
+
+chunkを作り直したい場合:
+
+```bash
+make ingest INGEST_ARGS=--rebuild
+```
+
 作成されるファイル:
 
 ```text
@@ -75,7 +84,9 @@ SQLiteの主なテーブル:
 
 ```text
 chunks  PDF本文chunkとembedding
+pdf_documents  PDFごとのsha256/status/chunk_count
 papers  Zotero論文メタデータ
+unique_papers  重複を除いたZotero論文メタデータview
 ```
 
 ## 5. 質問する
@@ -113,6 +124,9 @@ PDFを追加して `ingest.py` を再実行した後は、`bot.py` も再起動�
 cd /Users/example/projects/llm
 make zotero
 ```
+
+Zotero同期は `zotero_key` でupsertします。同じ論文が複数itemとして登録されている場合は、
+DOIまたは正規化title+yearでduplicate判定し、`duplicate_of` に代表itemを記録します。
 
 接続確認だけ:
 

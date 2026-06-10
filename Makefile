@@ -1,12 +1,13 @@
 .PHONY: bot ingest ask zotero bench check
 
 MODELS ?= qwen3:8b gemma4:12b gpt-oss:20b
+INGEST_ARGS ?=
 
 bot:
 	uv run python bot.py
 
 ingest:
-	uv run python rag_poc/ingest.py
+	uv run python rag_poc/ingest.py $(INGEST_ARGS)
 
 ask:
 	uv run python rag_poc/ask.py "$(Q)"
