@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -16,6 +17,8 @@ ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = ROOT.parent
 INDEX_DIR = ROOT / "index"
 INDEX_DB_PATH = INDEX_DIR / "chunks.sqlite3"
+PAPERS_DIR = ROOT / "papers"
+ZOTERO_PDF_DIR = PAPERS_DIR / "zotero"
 
 DEFAULT_API_BASE_URL = "https://api.zotero.org"
 DEFAULT_LIMIT = 25
@@ -76,15 +79,22 @@ def api_base_url() -> str:
     return env("ZOTERO_API_BASE_URL", DEFAULT_API_BASE_URL).rstrip("/")
 
 
-def zotero_get(path: str, params: dict | None = None) -> tuple[list, dict]:
+def zotero_request(
+    path: str,
+    params: dict | None = None,
+    *,
+    accept: str = "application/json",
+    timeout: int = 60,
+) -> tuple[bytes, dict]:
     query = urllib.parse.urlencode(params or {})
     url = f"{api_base_url()}{path}"
     if query:
         url = f"{url}?{query}"
 
     headers = {
-        "Accept": "application/json",
+        "Accept": accept,
         "User-Agent": "kohdalab-paperbot/0.1",
+        "Zotero-API-Version": "3",
     }
     api_key = env("ZOTERO_API_KEY")
     if api_key:
@@ -92,9 +102,8 @@ def zotero_get(path: str, params: dict | None = None) -> tuple[list, dict]:
 
     req = urllib.request.Request(url, headers=headers, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=60) as res:
-            body = res.read().decode("utf-8")
-            return json.loads(body), dict(res.headers.items())
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            return res.read(), dict(res.headers.items())
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         if exc.code in {401, 403}:
@@ -105,6 +114,15 @@ def zotero_get(path: str, params: dict | None = None) -> tuple[list, dict]:
         raise ZoteroError(f"Zotero API HTTP {exc.code}: {body}") from exc
     except urllib.error.URLError as exc:
         raise ZoteroError(f"Zotero API connection failed: {exc}") from exc
+
+
+def zotero_get(path: str, params: dict | None = None) -> tuple[list, dict]:
+    body, headers = zotero_request(path, params, accept="application/json")
+    return json.loads(body.decode("utf-8")), headers
+
+
+def zotero_get_file(path: str) -> tuple[bytes, dict]:
+    return zotero_request(path, accept="application/octet-stream", timeout=180)
 
 
 def total_results(headers: dict) -> int | None:
@@ -211,6 +229,51 @@ def make_dedupe_key(title: str, year: str, doi: str) -> str:
     return ""
 
 
+def file_md5(path: Path) -> str:
+    digest = hashlib.md5()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def attachment_mtime_seconds(mtime: str | int | None) -> float | None:
+    if not mtime:
+        return None
+    try:
+        return int(mtime) / 1000
+    except (TypeError, ValueError):
+        return None
+
+
+def is_pdf_attachment(item: dict) -> bool:
+    data = item.get("data") or {}
+    if data.get("itemType") != "attachment":
+        return False
+
+    content_type = (data.get("contentType") or "").lower()
+    filename = (data.get("filename") or "").lower()
+    title = (data.get("title") or "").lower()
+    return (
+        content_type == "application/pdf"
+        or filename.endswith(".pdf")
+        or title.endswith(".pdf")
+    )
+
+
+def attachment_filename(attachment: dict) -> str:
+    data = attachment.get("data") or {}
+    filename = data.get("filename") or data.get("title") or attachment.get("key") or "paper.pdf"
+    filename = filename.strip()
+    if not filename.lower().endswith(".pdf"):
+        filename += ".pdf"
+    return filename
+
+
+def zotero_pdf_path(paper_key: str, attachment_key: str) -> Path:
+    return ZOTERO_PDF_DIR / f"{paper_key}_{attachment_key}.pdf"
+
+
 def normalize_item(item: dict) -> dict | None:
     data = item.get("data") or {}
     item_type = data.get("itemType", "")
@@ -270,6 +333,11 @@ def init_db(path: Path) -> sqlite3.Connection:
             dedupe_key TEXT,
             is_duplicate INTEGER NOT NULL DEFAULT 0,
             duplicate_of TEXT,
+            pdf_attachment_key TEXT,
+            pdf_path TEXT,
+            pdf_md5 TEXT,
+            pdf_status TEXT,
+            pdf_downloaded_at TEXT,
             url TEXT,
             abstract TEXT,
             tags_json TEXT NOT NULL,
@@ -281,12 +349,38 @@ def init_db(path: Path) -> sqlite3.Connection:
         """
     )
     ensure_papers_columns(conn)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS zotero_attachments (
+            attachment_key TEXT PRIMARY KEY,
+            parent_key TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 0,
+            link_mode TEXT,
+            content_type TEXT,
+            filename TEXT,
+            md5 TEXT,
+            mtime TEXT,
+            path TEXT,
+            status TEXT NOT NULL,
+            error TEXT,
+            downloaded_at TEXT,
+            zotero_json TEXT NOT NULL
+        )
+        """
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_year ON papers(year)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_doi ON papers(doi)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_doi_norm ON papers(doi_norm)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_dedupe_key ON papers(dedupe_key)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_duplicate ON papers(is_duplicate)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_modified ON papers(date_modified)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_pdf_status ON papers(pdf_status)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_zotero_attachments_parent ON zotero_attachments(parent_key)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_zotero_attachments_status ON zotero_attachments(status)"
+    )
     conn.execute(
         """
         CREATE VIEW IF NOT EXISTS unique_papers AS
@@ -308,6 +402,11 @@ def ensure_papers_columns(conn: sqlite3.Connection) -> None:
         "dedupe_key": "TEXT",
         "is_duplicate": "INTEGER NOT NULL DEFAULT 0",
         "duplicate_of": "TEXT",
+        "pdf_attachment_key": "TEXT",
+        "pdf_path": "TEXT",
+        "pdf_md5": "TEXT",
+        "pdf_status": "TEXT",
+        "pdf_downloaded_at": "TEXT",
     }
     for name, column_type in columns.items():
         if name not in existing:
@@ -354,6 +453,86 @@ def assign_duplicates(
         primary_by_key[dedupe_key] = paper["zotero_key"]
 
     return duplicates
+
+
+def upsert_attachment_status(
+    conn: sqlite3.Connection,
+    *,
+    attachment: dict | None,
+    parent_key: str,
+    path: str = "",
+    status: str,
+    error: str = "",
+) -> None:
+    data = (attachment or {}).get("data") or {}
+    attachment_key = data.get("key") or (attachment or {}).get("key") or f"{parent_key}:none"
+    conn.execute(
+        """
+        INSERT INTO zotero_attachments (
+            attachment_key, parent_key, version, link_mode, content_type, filename,
+            md5, mtime, path, status, error, downloaded_at, zotero_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(attachment_key) DO UPDATE SET
+            parent_key = excluded.parent_key,
+            version = excluded.version,
+            link_mode = excluded.link_mode,
+            content_type = excluded.content_type,
+            filename = excluded.filename,
+            md5 = excluded.md5,
+            mtime = excluded.mtime,
+            path = excluded.path,
+            status = excluded.status,
+            error = excluded.error,
+            downloaded_at = excluded.downloaded_at,
+            zotero_json = excluded.zotero_json
+        """,
+        (
+            attachment_key,
+            parent_key,
+            int(data.get("version") or (attachment or {}).get("version") or 0),
+            data.get("linkMode", ""),
+            data.get("contentType", ""),
+            attachment_filename(attachment or {}) if attachment else "",
+            data.get("md5", ""),
+            str(data.get("mtime", "")),
+            path,
+            status,
+            error,
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            json.dumps(data, ensure_ascii=False),
+        ),
+    )
+
+
+def update_paper_pdf_status(
+    conn: sqlite3.Connection,
+    *,
+    paper_key: str,
+    attachment_key: str = "",
+    path: str = "",
+    md5: str = "",
+    status: str,
+) -> None:
+    conn.execute(
+        """
+        UPDATE papers
+        SET
+            pdf_attachment_key = ?,
+            pdf_path = ?,
+            pdf_md5 = ?,
+            pdf_status = ?,
+            pdf_downloaded_at = ?
+        WHERE zotero_key = ?
+        """,
+        (
+            attachment_key,
+            path,
+            md5,
+            status,
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            paper_key,
+        ),
+    )
 
 
 def upsert_paper(conn: sqlite3.Connection, paper: dict) -> None:
@@ -427,6 +606,168 @@ def print_sample(papers: list[dict]) -> None:
             print(f"    {authors}")
 
 
+def fetch_children(item_key: str) -> list[dict]:
+    data, _ = zotero_get(
+        f"{library_base_path()}/items/{item_key}/children",
+        {
+            "format": "json",
+            "include": "data",
+        },
+    )
+    return data
+
+
+def select_pdf_attachment(children: list[dict]) -> dict | None:
+    pdfs = [item for item in children if is_pdf_attachment(item)]
+    if not pdfs:
+        return None
+
+    def score(item: dict) -> tuple[int, int, str]:
+        data = item.get("data") or {}
+        link_mode = data.get("linkMode", "")
+        content_type = data.get("contentType", "")
+        has_md5 = 1 if data.get("md5") else 0
+        imported = 1 if link_mode in {"imported_file", "imported_url"} else 0
+        exact_pdf = 1 if content_type == "application/pdf" else 0
+        return (imported + exact_pdf, has_md5, data.get("dateModified", ""))
+
+    return sorted(pdfs, key=score, reverse=True)[0]
+
+
+def should_skip_pdf(path: Path, remote_md5: str, force: bool) -> bool:
+    if force or not path.exists():
+        return False
+    if not remote_md5:
+        return True
+    return file_md5(path) == remote_md5.lower()
+
+
+def download_attachment_file(attachment_key: str, dest: Path) -> tuple[str, dict]:
+    body, headers = zotero_get_file(f"{library_base_path()}/items/{attachment_key}/file")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    tmp.write_bytes(body)
+    tmp.replace(dest)
+    return file_md5(dest), headers
+
+
+def download_unique_pdfs(
+    conn: sqlite3.Connection,
+    unique_papers: list[dict],
+    *,
+    dry_run: bool = False,
+    force: bool = False,
+) -> dict:
+    report = {
+        "checked": 0,
+        "downloaded": 0,
+        "unchanged": 0,
+        "no_pdf": 0,
+        "failed": 0,
+    }
+
+    for paper in unique_papers:
+        paper_key = paper["zotero_key"]
+        report["checked"] += 1
+        title = paper["title"] or paper_key
+        print(f"PDF {paper_key}: {title}")
+
+        try:
+            children = fetch_children(paper_key)
+            attachment = select_pdf_attachment(children)
+            if not attachment:
+                print("  no PDF attachment")
+                report["no_pdf"] += 1
+                if not dry_run:
+                    upsert_attachment_status(
+                        conn,
+                        attachment=None,
+                        parent_key=paper_key,
+                        status="no_pdf",
+                    )
+                    update_paper_pdf_status(
+                        conn,
+                        paper_key=paper_key,
+                        status="no_pdf",
+                    )
+                continue
+
+            data = attachment.get("data") or {}
+            attachment_key = data.get("key") or attachment.get("key")
+            if not attachment_key:
+                raise ZoteroError("PDF attachment has no key.")
+            remote_md5 = (data.get("md5") or "").lower()
+            remote_mtime = attachment_mtime_seconds(data.get("mtime"))
+            dest = zotero_pdf_path(paper_key, attachment_key)
+            rel_path = dest.relative_to(PAPERS_DIR).as_posix()
+
+            if dry_run:
+                print(f"  would download {attachment_filename(attachment)} -> {rel_path}")
+                continue
+
+            if should_skip_pdf(dest, remote_md5, force):
+                print(f"  unchanged {rel_path}")
+                report["unchanged"] += 1
+                local_md5 = file_md5(dest) if dest.exists() else remote_md5
+                upsert_attachment_status(
+                    conn,
+                    attachment=attachment,
+                    parent_key=paper_key,
+                    path=rel_path,
+                    status="unchanged",
+                )
+                update_paper_pdf_status(
+                    conn,
+                    paper_key=paper_key,
+                    attachment_key=attachment_key,
+                    path=rel_path,
+                    md5=local_md5,
+                    status="downloaded",
+                )
+                continue
+
+            local_md5, _headers = download_attachment_file(attachment_key, dest)
+            if remote_mtime is not None:
+                os.utime(dest, (remote_mtime, remote_mtime))
+            print(f"  downloaded {rel_path}")
+            report["downloaded"] += 1
+            upsert_attachment_status(
+                conn,
+                attachment=attachment,
+                parent_key=paper_key,
+                path=rel_path,
+                status="downloaded",
+            )
+            update_paper_pdf_status(
+                conn,
+                paper_key=paper_key,
+                attachment_key=attachment_key,
+                path=rel_path,
+                md5=local_md5,
+                status="downloaded",
+            )
+        except (OSError, ZoteroError) as exc:
+            print(f"  failed: {exc}")
+            report["failed"] += 1
+            if not dry_run:
+                upsert_attachment_status(
+                    conn,
+                    attachment=None,
+                    parent_key=paper_key,
+                    status="failed",
+                    error=str(exc),
+                )
+                update_paper_pdf_status(
+                    conn,
+                    paper_key=paper_key,
+                    status="failed",
+                )
+
+        time.sleep(0.2)
+
+    return report
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Sync Zotero Group/User Library metadata into the local SQLite index."
@@ -447,6 +788,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Fetch and print a sample without writing to SQLite.",
     )
+    parser.add_argument(
+        "--download-pdfs",
+        action="store_true",
+        help="Download PDF child attachments for unique paper items only.",
+    )
+    parser.add_argument(
+        "--force-pdf-download",
+        action="store_true",
+        help="Re-download PDFs even when the local copy appears unchanged.",
+    )
     return parser.parse_args()
 
 
@@ -464,12 +815,21 @@ def main() -> None:
         duplicates = assign_duplicates(papers, {})
         skipped = len(items) - len(papers)
         unique_count = len(papers) - len(duplicates)
+        unique_papers = [paper for paper in papers if not paper["is_duplicate"]]
         print(f"Fetched {len(items)} Zotero top-level items.")
         print(
             f"Paper-like items: {len(papers)} / unique: {unique_count} / "
             f"duplicates: {len(duplicates)} / skipped: {skipped}"
         )
         print_sample(papers)
+        if args.download_pdfs:
+            pdf_report = download_unique_pdfs(
+                sqlite3.connect(":memory:"),
+                unique_papers,
+                dry_run=True,
+                force=args.force_pdf_download,
+            )
+            print(f"PDF dry run: {pdf_report}")
         print("Dry run: SQLite was not updated.")
         return
 
@@ -478,6 +838,7 @@ def main() -> None:
         duplicates = assign_duplicates(papers, load_primary_by_dedupe_key(conn))
         skipped = len(items) - len(papers)
         unique_count = len(papers) - len(duplicates)
+        unique_papers = [paper for paper in papers if not paper["is_duplicate"]]
         print(f"Fetched {len(items)} Zotero top-level items.")
         print(
             f"Paper-like items: {len(papers)} / unique: {unique_count} / "
@@ -487,6 +848,15 @@ def main() -> None:
 
         for paper in papers:
             upsert_paper(conn, paper)
+
+        if args.download_pdfs:
+            pdf_report = download_unique_pdfs(
+                conn,
+                unique_papers,
+                force=args.force_pdf_download,
+            )
+            print(f"PDF sync: {pdf_report}")
+
         conn.commit()
     finally:
         conn.close()
