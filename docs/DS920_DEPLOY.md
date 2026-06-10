@@ -192,9 +192,9 @@ sudo docker compose -f docker-compose.nas.yml up -d --build paperbot
 ```
 
 `docker-compose.nas.yml` uses a shared `kohdalab-paperbot:local` image for all
-services. The scheduled scripts run one-off containers with `--build` by
-default, which prevents `paper-watch` from using an old image after code changes.
-Set `COMPOSE_RUN_BUILD=0` only for troubleshooting.
+services. The scheduled scripts quietly rebuild that image before one-off jobs
+by default, which prevents `paper-watch` from using an old image after code
+changes. Set `COMPOSE_RUN_BUILD=0` only for troubleshooting.
 
 If the RAG schema or chunking changed:
 

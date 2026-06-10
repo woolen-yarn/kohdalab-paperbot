@@ -292,9 +292,10 @@ sudo docker compose -f docker-compose.nas.yml up -d --build paperbot
 ```
 
 All Compose services share the `kohdalab-paperbot:local` image. The scheduled
-scripts also run Compose with `--build` by default, so `paper-watch`, `zotero`,
-and `ingest` do not silently keep using an old image after a Git pull. Set
-`COMPOSE_RUN_BUILD=0` only if you intentionally want to skip that check.
+scripts quietly rebuild that image before one-off jobs by default, so
+`paper-watch`, `zotero`, and `ingest` do not silently keep using an old image
+after a Git pull. Set `COMPOSE_RUN_BUILD=0` only if you intentionally want to
+skip that check.
 
 Follow logs:
 
