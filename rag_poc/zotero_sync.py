@@ -657,6 +657,7 @@ def download_unique_pdfs(
     *,
     dry_run: bool = False,
     force: bool = False,
+    verbose: bool = False,
 ) -> dict:
     report = {
         "checked": 0,
@@ -670,13 +671,15 @@ def download_unique_pdfs(
         paper_key = paper["zotero_key"]
         report["checked"] += 1
         title = paper["title"] or paper_key
-        print(f"PDF {paper_key}: {title}")
+        if verbose:
+            print(f"PDF {paper_key}: {title}")
 
         try:
             children = fetch_children(paper_key)
             attachment = select_pdf_attachment(children)
             if not attachment:
-                print("  no PDF attachment")
+                if verbose:
+                    print(f"PDF {paper_key}: no PDF attachment")
                 report["no_pdf"] += 1
                 if not dry_run:
                     upsert_attachment_status(
@@ -702,11 +705,12 @@ def download_unique_pdfs(
             rel_path = dest.relative_to(PAPERS_DIR).as_posix()
 
             if dry_run:
-                print(f"  would download {attachment_filename(attachment)} -> {rel_path}")
+                print(f"PDF {paper_key}: would download {attachment_filename(attachment)} -> {rel_path}")
                 continue
 
             if should_skip_pdf(dest, remote_md5, force):
-                print(f"  unchanged {rel_path}")
+                if verbose:
+                    print(f"PDF {paper_key}: unchanged {rel_path}")
                 report["unchanged"] += 1
                 local_md5 = file_md5(dest) if dest.exists() else remote_md5
                 upsert_attachment_status(
@@ -729,7 +733,7 @@ def download_unique_pdfs(
             local_md5, _headers = download_attachment_file(attachment_key, dest)
             if remote_mtime is not None:
                 os.utime(dest, (remote_mtime, remote_mtime))
-            print(f"  downloaded {rel_path}")
+            print(f"PDF {paper_key}: downloaded {rel_path}")
             report["downloaded"] += 1
             upsert_attachment_status(
                 conn,
@@ -747,7 +751,7 @@ def download_unique_pdfs(
                 status="downloaded",
             )
         except (OSError, ZoteroError) as exc:
-            print(f"  failed: {exc}")
+            print(f"PDF {paper_key}: failed: {exc}")
             report["failed"] += 1
             if not dry_run:
                 upsert_attachment_status(
@@ -798,6 +802,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Re-download PDFs even when the local copy appears unchanged.",
     )
+    parser.add_argument(
+        "--verbose-pdfs",
+        action="store_true",
+        help="Print unchanged/no-PDF entries during PDF sync.",
+    )
     return parser.parse_args()
 
 
@@ -828,6 +837,7 @@ def main() -> None:
                 unique_papers,
                 dry_run=True,
                 force=args.force_pdf_download,
+                verbose=args.verbose_pdfs,
             )
             print(f"PDF dry run: {pdf_report}")
         print("Dry run: SQLite was not updated.")
@@ -854,6 +864,7 @@ def main() -> None:
                 conn,
                 unique_papers,
                 force=args.force_pdf_download,
+                verbose=args.verbose_pdfs,
             )
             print(f"PDF sync: {pdf_report}")
 

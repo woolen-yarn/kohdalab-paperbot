@@ -176,6 +176,9 @@ To download attached PDFs for representative papers only:
 make zotero ZOTERO_ARGS="--all --download-pdfs"
 ```
 
+By default, unchanged PDFs are not printed one by one. Add `--verbose-pdfs` if
+you need a full per-PDF log.
+
 PDFs are saved under:
 
 ```text
