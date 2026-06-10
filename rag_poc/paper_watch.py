@@ -1538,7 +1538,7 @@ Japanese introduction:
 
 def bilingual_intro(item: dict, *, enabled: bool) -> str:
     if not enabled:
-        return fallback_intro(item, reason="disabled")
+        return ""
     try:
         english_intro = strip_intro_label(
             generate(build_english_intro_prompt(item), summary_model(), timeout=180),
@@ -1569,6 +1569,81 @@ def bilingual_intro(item: dict, *, enabled: bool) -> str:
     return f"EN: {english_intro}\nJA: {japanese_intro}"
 
 
+def slack_link(url: str, label: str = "open") -> str:
+    if not url:
+        return ""
+    return f"<{url}|{label}>"
+
+
+def score_summary(item: dict, *, use_rag_score: bool) -> str:
+    parts = [
+        f"score={item['score']:.1f}",
+        f"term={item.get('term_score', item['score']):.1f}",
+    ]
+    if use_rag_score:
+        parts.append(f"rag={item.get('rag_score', 0.0):.3f}")
+    return " ".join(parts)
+
+
+def build_item_message(
+    item: dict,
+    *,
+    include_intro: bool = True,
+    use_rag_score: bool = False,
+    include_abstract: bool = False,
+    verbose: bool = False,
+) -> str:
+    reasons = compact_reasons(item)
+    grade = relevance_grade(item)
+    source = source_label(item)
+    lines = [
+        f"*Paper Watch*  `[{grade}] {source}`",
+        f"*{item['title']}*",
+        compact_authors(item["authors"]),
+        f"match: {reasons}",
+    ]
+
+    nearest = nearest_pdf_label(item) if use_rag_score else ""
+    if nearest:
+        lines.append(f"near: {nearest}")
+    if verbose:
+        lines.append(
+            f"`{score_summary(item, use_rag_score=use_rag_score)}` "
+            f"`{item['source']}:{item['external_id']}`"
+        )
+
+    intro = bilingual_intro(item, enabled=include_intro)
+    if intro:
+        lines.append(intro)
+    if include_abstract:
+        lines.append(f"abstract: {truncate(item['summary'], 260)}")
+
+    link = slack_link(item.get("url", ""))
+    if link:
+        lines.append(f"link: {link}")
+    return "\n".join(lines)
+
+
+def build_messages(
+    items: list[dict],
+    *,
+    include_intro: bool = True,
+    use_rag_score: bool = False,
+    include_abstract: bool = False,
+    verbose: bool = False,
+) -> list[str]:
+    return [
+        build_item_message(
+            item,
+            include_intro=include_intro,
+            use_rag_score=use_rag_score,
+            include_abstract=include_abstract,
+            verbose=verbose,
+        )
+        for item in items
+    ]
+
+
 def build_message(
     items: list[dict],
     *,
@@ -1578,46 +1653,16 @@ def build_message(
     include_abstract: bool = False,
     verbose: bool = False,
 ) -> str:
-    lines = ["*Paper Watch / 新着論文紹介*"]
-    if terms and verbose:
-        lines.append(f"profile=`{profile_label(terms)}`")
-        if use_rag_score:
-            weight = env_float("PAPER_WATCH_RAG_WEIGHT", 8.0)
-            lines.append(f"scoring=`term score + RAG similarity x {weight:g}`")
-        else:
-            lines.append("scoring=`profile term match`")
-    for index, item in enumerate(items, start=1):
-        reasons = compact_reasons(item)
-        score_parts = [
-            f"`{item['source']}:{item['external_id']}`",
-            f"score=`{item['score']:.1f}`",
-            f"term=`{item.get('term_score', item['score']):.1f}`",
-        ]
-        if use_rag_score:
-            score_parts.append(f"rag=`{item.get('rag_score', 0.0):.3f}`")
-        score_parts.append(f"reasons=`{reasons}`")
-        meta_parts = [
-            source_label(item),
-            f"rank={relevance_grade(item)}",
-            f"match={reasons}",
-        ]
-        nearest = nearest_pdf_label(item) if use_rag_score else ""
-        if nearest:
-            meta_parts.append(f"near={nearest}")
-        lines.extend(
-            [
-                "",
-                f"*{index}. [{relevance_grade(item)}] {item['title']}*",
-                compact_authors(item["authors"]),
-                " · ".join(meta_parts),
-            ]
+    del terms
+    return "\n\n---\n\n".join(
+        build_messages(
+            items,
+            include_intro=include_intro,
+            use_rag_score=use_rag_score,
+            include_abstract=include_abstract,
+            verbose=verbose,
         )
-        if verbose:
-            lines.append(" ".join(score_parts))
-        lines.extend([bilingual_intro(item, enabled=include_intro), item["url"]])
-        if include_abstract:
-            lines.append(f"Abstract: {truncate(item['summary'], 360)}")
-    return "\n".join(lines)
+    )
 
 
 def post_to_slack(text: str) -> bool:
@@ -1739,17 +1784,20 @@ def main() -> None:
             verbose_message = (
                 env_bool("PAPER_WATCH_VERBOSE_MESSAGE", False) or args.verbose_message
             )
-            message = build_message(
+            messages = build_messages(
                 candidates,
-                terms=terms,
                 include_intro=include_intro,
                 use_rag_score=use_rag_score,
                 include_abstract=include_abstract,
                 verbose=verbose_message,
             )
-            print(message)
-            if not args.dry_run and post_to_slack(message):
-                mark_posted(conn, candidates)
+            print("\n\n---\n\n".join(messages))
+            if not args.dry_run:
+                for item, message in zip(candidates, messages):
+                    if not post_to_slack(message):
+                        break
+                    mark_posted(conn, [item])
+                    conn.commit()
         elif args.notify_empty:
             message = "Paper Watch / 新着論文紹介: no new matching papers found."
             print(message)

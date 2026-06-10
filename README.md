@@ -188,8 +188,9 @@ score = term_score + rag_similarity * PAPER_WATCH_RAG_WEIGHT
 ```
 
 Paper Watchは、研究プロファイル語による `term_score` と、既存PDF RAG index
-との abstract 類似度 `rag_similarity` の両方で候補を選びます。Slack通知には
-デフォルトでタイトル、著者、日英紹介、リンク、近かった研究室PDFだけを表示します。
+との abstract 類似度 `rag_similarity` の両方で候補を選びます。Slack通知は
+1論文ずつ個別メッセージで投稿し、デフォルトでタイトル、著者、match、近かった
+研究室PDF、日英紹介、短いリンクだけを表示します。
 `PAPER_WATCH_VERBOSE_MESSAGE=true` にすると `score`, `term`, `rag` などの詳細も
 表示します。`PAPER_WATCH_INCLUDE_ABSTRACT=true` にすると Abstract も表示します。
 
