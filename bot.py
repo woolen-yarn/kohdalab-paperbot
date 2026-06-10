@@ -91,13 +91,20 @@ class RagResult:
     question: str
 
 
-def format_rag_message(answer: str, source_ids: str) -> str:
+MAX_INLINE_SOURCES_CHARS = 6000
+
+
+def format_rag_message(answer: str, sources: str) -> str:
     clean_answer = answer.strip() or "LLMが空の回答を返しました。Sourcesを確認してください。"
-    clean_source_ids = source_ids.strip() or "No sources."
+    clean_sources = sources.strip() or "No sources."
+    if len(clean_sources) > MAX_INLINE_SOURCES_CHARS:
+        clean_sources = (
+            clean_sources[:MAX_INLINE_SOURCES_CHARS].rstrip()
+            + "\n... sources truncated. Send `sources` for the full list."
+        )
     return (
         f"*Answer*\n{clean_answer}\n\n"
-        f"*Sources*: {clean_source_ids}\n"
-        "詳細は `sources` と送ってください。"
+        f"*Sources*\n```{clean_sources}```"
     )
 
 
@@ -107,7 +114,7 @@ def ask_rag(question: str) -> RagResult:
     sources = format_sources(contexts)
     source_ids = format_source_ids(contexts)
     duration = time.monotonic() - started
-    message = format_rag_message(answer, source_ids)
+    message = format_rag_message(answer, sources)
     return RagResult(
         message=message,
         answer=answer,
@@ -133,7 +140,7 @@ def command_help() -> str:
             "*PaperBot commands*",
             "`/help`  このヘルプを表示",
             "`/model`  現在のLLM/embedding設定を表示",
-            "`/sources`  直前の回答で使ったSourcesを再表示",
+            "`/sources`  直前の回答で使ったSourcesをもう一度表示",
             "`/recent`  NAS上の最近のPDFを表示",
             "",
             "通常の質問はそのまま送ってください。例: `Persistent Spin Helixについて一文で教えて`",
