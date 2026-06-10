@@ -149,6 +149,7 @@ PAPER_WATCH_LOOKBACK_DAYS=14
 PAPER_WATCH_MAX_RESULTS=80
 PAPER_WATCH_RSS_GROUPS=pr,nature,aip
 PAPER_WATCH_RSS_CROSSREF_FALLBACK=true
+PAPER_WATCH_RSS_CROSSREF_FALLBACK_MAX_JOURNALS=6
 PAPER_WATCH_POST_LIMIT=5
 PAPER_WATCH_MIN_SCORE=6
 PAPER_WATCH_BILINGUAL_INTRO=true
@@ -157,9 +158,10 @@ PAPER_WATCH_TRANSLATION_MODEL=qwen3:14b
 ```
 
 Paper Watchは研究室プロファイル語の `term_score` と、候補abstractを既存PDF RAG
-indexに照合した `rag_score` を組み合わせて候補を選びます。RSSは `pr`,
-`nature`, `aip` のgroupに分けてあり、Synologyのタスクスケジューラで週次arXiv、
-月次RSS groupのように分散実行できます。投稿文は英語紹介を
+indexに照合した `rag_score` を組み合わせて候補を選びます。RSS/Crossref fallbackは
+`pr`, `pr_ext`, `nature`, `nature_ext`, `aip`, `nano_2d`, `broad_high` の
+groupに分けてあり、Synologyのタスクスケジューラで週次arXiv、月次RSS groupの
+ように分散実行できます。投稿文は英語紹介を
 `PAPER_WATCH_SUMMARY_MODEL`、日本語化を `PAPER_WATCH_TRANSLATION_MODEL` で生成します。
 
 dry-run:
