@@ -161,7 +161,7 @@ Paper Watchは研究室プロファイル語の `term_score` と、候補abstrac
 indexに照合した `rag_score` を組み合わせて候補を選びます。RSS/Crossref fallbackは
 `pr`, `pr_ext`, `nature`, `nature_ext`, `aip`, `nano_2d`, `broad_high` の
 groupに分けてあり、Synologyのタスクスケジューラで週次arXiv、月次RSS groupの
-ように分散実行できます。投稿文は英語紹介を
+ように分散実行できます。Slackには1論文ずつ個別メッセージで投稿します。投稿文は英語紹介を
 `PAPER_WATCH_SUMMARY_MODEL`、日本語化を `PAPER_WATCH_TRANSLATION_MODEL` で生成します。
 
 dry-run:
