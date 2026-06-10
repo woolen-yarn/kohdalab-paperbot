@@ -167,6 +167,38 @@ multiple Zotero items, PaperBot marks later matches as duplicates using DOI when
 available, otherwise normalized title plus year. Use the `unique_papers` SQLite
 view when you want only representative paper records.
 
+To download attached PDFs for representative papers only:
+
+```bash
+make zotero ZOTERO_ARGS="--all --download-pdfs"
+```
+
+PDFs are saved under:
+
+```text
+rag_poc/papers/zotero/
+```
+
+PDF download is incremental. Existing files are skipped when the Zotero
+attachment metadata and local file match. After downloading PDFs, update the RAG
+chunks:
+
+```bash
+make ingest
+```
+
+For a Zotero-only RAG index, rebuild from the Zotero PDF folder:
+
+```bash
+make ingest INGEST_ARGS="--rebuild --source-prefix zotero/"
+```
+
+After that first rebuild, regular incremental updates can use:
+
+```bash
+make ingest INGEST_ARGS="--source-prefix zotero/"
+```
+
 ## Logs
 
 Runtime logs are written here:

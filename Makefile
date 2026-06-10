@@ -2,6 +2,7 @@
 
 MODELS ?= qwen3:8b gemma4:12b gpt-oss:20b
 INGEST_ARGS ?=
+ZOTERO_ARGS ?=
 
 bot:
 	uv run python bot.py
@@ -13,7 +14,7 @@ ask:
 	uv run python rag_poc/ask.py "$(Q)"
 
 zotero:
-	uv run python rag_poc/zotero_sync.py
+	uv run python rag_poc/zotero_sync.py $(ZOTERO_ARGS)
 
 bench:
 	uv run python scripts/benchmark_ollama_models.py --models $(MODELS)

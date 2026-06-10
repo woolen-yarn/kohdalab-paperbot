@@ -23,6 +23,7 @@ services:
     env_file:
       - /volume1/docker/paperbot/.env
     volumes:
+      - /volume1/docker/paperbot/rag_poc/papers:/app/rag_poc/papers
       - /volume1/docker/paperbot/rag_poc/index:/app/rag_poc/index
       - /volume1/docker/paperbot/logs:/app/logs
     command: ["python", "rag_poc/zotero_sync.py"]

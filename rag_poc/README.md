@@ -128,6 +128,28 @@ make zotero
 Zotero同期は `zotero_key` でupsertします。同じ論文が複数itemとして登録されている場合は、
 DOIまたは正規化title+yearでduplicate判定し、`duplicate_of` に代表itemを記録します。
 
+代表itemだけ添付PDFを取得する場合:
+
+```bash
+make zotero ZOTERO_ARGS="--all --download-pdfs"
+make ingest INGEST_ARGS="--rebuild --source-prefix zotero/"
+```
+
+以後の差分更新:
+
+```bash
+make zotero ZOTERO_ARGS="--all --download-pdfs"
+make ingest INGEST_ARGS="--source-prefix zotero/"
+```
+
+PDFはここに保存されます:
+
+```text
+rag_poc/papers/zotero/
+```
+
+PDF取得も差分更新です。既に同じPDFが保存されている場合は再ダウンロードしません。
+
 接続確認だけ:
 
 ```bash

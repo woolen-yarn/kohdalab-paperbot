@@ -129,11 +129,13 @@ def chunk_pages(pages: list[dict]) -> list[dict]:
     return chunks
 
 
-def iter_pdfs() -> list[Path]:
+def iter_pdfs(source_prefix: str = "") -> list[Path]:
     return sorted(
         path
         for path in PAPERS_DIR.rglob("*")
-        if path.is_file() and path.suffix.lower() == ".pdf"
+        if path.is_file()
+        and path.suffix.lower() == ".pdf"
+        and source_name(path).startswith(source_prefix)
     )
 
 
@@ -220,8 +222,18 @@ def delete_sources(conn: sqlite3.Connection, sources: list[str]) -> None:
     conn.execute(f"DELETE FROM pdf_documents WHERE source IN ({placeholders})", sources)
 
 
-def cleanup_removed_sources(conn: sqlite3.Connection, current_sources: set[str]) -> list[str]:
-    rows = conn.execute("SELECT source FROM pdf_documents").fetchall()
+def cleanup_removed_sources(
+    conn: sqlite3.Connection,
+    current_sources: set[str],
+    source_prefix: str = "",
+) -> list[str]:
+    if source_prefix:
+        rows = conn.execute(
+            "SELECT source FROM pdf_documents WHERE source LIKE ?",
+            (f"{source_prefix}%",),
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT source FROM pdf_documents").fetchall()
     existing_sources = {row[0] for row in rows}
     removed = sorted(existing_sources - current_sources)
     delete_sources(conn, removed)
@@ -346,6 +358,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Clear PDF chunks and PDF tracking tables before indexing. Zotero papers are preserved.",
     )
+    parser.add_argument(
+        "--source-prefix",
+        default="",
+        help="Only index PDFs whose source path starts with this prefix, e.g. zotero/.",
+    )
     return parser.parse_args()
 
 
@@ -354,9 +371,12 @@ def main() -> None:
     PAPERS_DIR.mkdir(parents=True, exist_ok=True)
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
-    pdfs = iter_pdfs()
+    pdfs = iter_pdfs(args.source_prefix)
     if not pdfs:
-        print(f"No PDFs found. Put PDFs in: {PAPERS_DIR}")
+        if args.source_prefix:
+            print(f"No PDFs found for prefix {args.source_prefix!r} in: {PAPERS_DIR}")
+        else:
+            print(f"No PDFs found. Put PDFs in: {PAPERS_DIR}")
         return
 
     chunks_added = 0
@@ -370,7 +390,7 @@ def main() -> None:
     conn = init_index_db(INDEX_DB_PATH, rebuild=args.rebuild)
     try:
         backfill_pdf_documents(conn)
-        removed_sources = cleanup_removed_sources(conn, current_sources)
+        removed_sources = cleanup_removed_sources(conn, current_sources, args.source_prefix)
         existing_docs = load_pdf_documents(conn)
         primary_source_by_hash = load_primary_source_by_hash(conn)
 
