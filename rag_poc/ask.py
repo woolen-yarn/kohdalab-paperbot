@@ -23,6 +23,7 @@ SHORT_TOP_K = int(os.environ.get("PAPERBOT_SHORT_TOP_K", "3"))
 DEEP_TOP_K = int(os.environ.get("PAPERBOT_DEEP_TOP_K", "8"))
 MAX_PER_SOURCE = int(os.environ.get("PAPERBOT_MAX_PER_SOURCE", "3"))
 TOKEN_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9+\-]*|\d+(?:\.\d+)?")
+JAPANESE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
 SHORT_QUESTION_RE = re.compile(
     r"(一文|1文|１文|一言|ひとこと|短く|簡潔|brief|one sentence|in one sentence)",
     re.IGNORECASE,
@@ -185,6 +186,12 @@ def normalize_source_references(answer: str) -> str:
 
 def clean_answer(answer: str) -> str:
     return normalize_source_references(normalize_technical_terms(answer))
+
+
+def answer_language(question: str) -> str:
+    if JAPANESE_RE.search(question):
+        return "ja"
+    return "en"
 
 
 @lru_cache(maxsize=1)
@@ -359,7 +366,19 @@ def search(question: str, chunks: list[dict], top_k: int | None = None) -> list[
     return results
 
 
-def answer_style_instruction(question: str) -> str:
+def answer_style_instruction(question: str, language: str) -> str:
+    if language == "en":
+        if is_short_question(question):
+            return (
+                "Answer in exactly one English sentence. "
+                "Do not add a preface or bullet points. "
+                "Cite evidence at the end using only source IDs such as (S1)."
+            )
+        return (
+            "Answer concisely in English. "
+            "Use bullet points only when the question has multiple distinct points."
+        )
+
     if is_short_question(question):
         return (
             "回答は1文だけにしてください。"
@@ -373,7 +392,8 @@ def answer_style_instruction(question: str) -> str:
 
 def build_prompt(question: str, contexts: list[dict]) -> str:
     canonical_terms = ", ".join(CANONICAL_TERMS)
-    style_instruction = answer_style_instruction(question)
+    language = answer_language(question)
+    style_instruction = answer_style_instruction(question, language)
     context_text = "\n\n".join(
         (
             f"Source S{i}: {ctx['source_label']} pp.{ctx['page_start']}-{ctx['page_end']} "
@@ -381,6 +401,31 @@ def build_prompt(question: str, contexts: list[dict]) -> str:
         )
         for i, ctx in enumerate(contexts, start=1)
     )
+
+    if language == "en":
+        return f"""You are KohdaLab's PaperBot.
+Answer in English using only the literature excerpts below as evidence.
+If the excerpts do not contain enough evidence, say "I could not find enough evidence in the indexed PDFs."
+In the answer, cite evidence using only source IDs such as (S1), (S2).
+Do not write phrases such as "Source S1", "S1: Source S3", or "Source ID" in the answer.
+Do not use citation numbers found inside PDF text, such as [12] or [27], as evidence IDs.
+Do not infer paper numbers, author names, materials, or applications that are not stated in the excerpts.
+{style_instruction}
+Keep technical terms and proper nouns in the English form used in the excerpts.
+Do not translate, katakana-ize, paraphrase, or mis-convert the following terms:
+{canonical_terms}
+Use Rashba, Dresselhaus, SU(2), 2DEG, TRKR, GaAs, and PSH as-is.
+When explaining PSH, write "Rashba and linear Dresselhaus spin-orbit interactions"; do not replace Rashba with another term.
+If you are unsure about a technical term, author name, or material name, keep the original English wording.
+
+Question:
+{question}
+
+Literature excerpts:
+{context_text}
+
+Answer:
+"""
 
     return f"""あなたはKohdaLabの研究室PaperBotです。
 以下の文献抜粋だけを根拠に、日本語で答えてください。
@@ -408,12 +453,28 @@ PSHを説明するときは「Rashba and linear Dresselhaus spin-orbit interacti
 
 
 def build_empty_answer_retry_prompt(question: str, contexts: list[dict]) -> str:
+    language = answer_language(question)
     compact_context = "\n\n".join(
         (
             f"S{i}: {ctx['text'][:1200]}"
         )
         for i, ctx in enumerate(contexts[:3], start=1)
     )
+    if language == "en":
+        return f"""Using only the following literature excerpts, answer the question in exactly one English sentence.
+You must write an answer. Empty answers are not allowed.
+Cite evidence at the end using a source ID such as (S1).
+Keep technical terms Rashba, Dresselhaus, SU(2), PSH, 2DEG, and GaAs in English.
+
+Question:
+{question}
+
+Literature excerpts:
+{compact_context}
+
+One-sentence answer:
+"""
+
     return f"""次の文献抜粋だけを根拠に、質問へ日本語で1文だけ答えてください。
 必ず回答本文を書いてください。空回答は禁止です。
 根拠として文末に (S1) のようにSource IDを付けてください。
@@ -429,7 +490,12 @@ def build_empty_answer_retry_prompt(question: str, contexts: list[dict]) -> str:
 """
 
 
-def fallback_empty_answer() -> str:
+def fallback_empty_answer(question: str) -> str:
+    if answer_language(question) == "en":
+        return (
+            "The search found sources, but the LLM returned an empty answer. "
+            "Please check the Sources below or try another model."
+        )
     return (
         "検索結果は見つかりましたが、LLMが空の回答を返しました。"
         "下のSourcesを確認するか、別モデルで再試行してください。"
@@ -465,7 +531,7 @@ def answer_question(question: str) -> tuple[str, list[dict]]:
         answer = generate(build_empty_answer_retry_prompt(question, contexts), CHAT_MODEL)
         answer = clean_answer(answer)
     if not answer.strip():
-        answer = fallback_empty_answer()
+        answer = fallback_empty_answer(question)
     return answer, contexts
 
 

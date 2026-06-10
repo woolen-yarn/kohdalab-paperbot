@@ -23,7 +23,7 @@ ZOTERO_PDF_DIR = PAPERS_DIR / "zotero"
 
 DEFAULT_API_BASE_URL = "https://api.zotero.org"
 DEFAULT_LIMIT = 25
-DEFAULT_PDF_WORKERS = 4
+DEFAULT_PDF_WORKERS = 1
 REQUEST_BATCH_SIZE = 100
 SKIPPED_ITEM_TYPES = {"attachment", "note"}
 
@@ -46,14 +46,6 @@ def load_env_file(path: Path) -> None:
 
 def env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
-
-
-def default_sync_limit() -> int:
-    value = env("ZOTERO_SYNC_LIMIT", str(DEFAULT_LIMIT))
-    try:
-        return int(value)
-    except ValueError as exc:
-        raise ZoteroError("ZOTERO_SYNC_LIMIT must be an integer.") from exc
 
 
 def default_pdf_workers() -> int:
@@ -145,10 +137,21 @@ def total_results(headers: dict) -> int | None:
         return None
 
 
-def fetch_top_items(limit: int | None) -> list[dict]:
+def library_version(headers: dict) -> int:
+    value = headers.get("Last-Modified-Version") or headers.get("last-modified-version")
+    if not value:
+        return 0
+    try:
+        return int(value)
+    except ValueError:
+        return 0
+
+
+def fetch_top_items(limit: int | None, since: int | None = None) -> tuple[list[dict], int]:
     items = []
     start = 0
     total = None
+    latest_version = 0
 
     while True:
         batch_limit = REQUEST_BATCH_SIZE
@@ -167,8 +170,10 @@ def fetch_top_items(limit: int | None) -> list[dict]:
                 "direction": "desc",
                 "start": start,
                 "limit": batch_limit,
+                **({"since": since} if since else {}),
             },
         )
+        latest_version = max(latest_version, library_version(headers))
         if total is None:
             total = total_results(headers)
 
@@ -185,7 +190,18 @@ def fetch_top_items(limit: int | None) -> list[dict]:
 
         time.sleep(0.2)
 
-    return items
+    return items, latest_version
+
+
+def fetch_deleted_items(since: int) -> tuple[set[str], int]:
+    body, headers = zotero_request(
+        f"{library_base_path()}/deleted",
+        {"since": since},
+        accept="application/json",
+    )
+    data = json.loads(body.decode("utf-8"))
+    deleted = set(data.get("items") or []) if isinstance(data, dict) else set()
+    return deleted, library_version(headers)
 
 
 def creator_name(creator: dict) -> str:
@@ -378,6 +394,15 @@ def init_db(path: Path) -> sqlite3.Connection:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS zotero_sync_state (
+            library_path TEXT PRIMARY KEY,
+            version INTEGER NOT NULL DEFAULT 0,
+            synced_at TEXT NOT NULL
+        )
+        """
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_year ON papers(year)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_doi ON papers(doi)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_doi_norm ON papers(doi_norm)")
@@ -399,6 +424,47 @@ def init_db(path: Path) -> sqlite3.Connection:
         """
     )
     return conn
+
+
+def get_sync_version(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT version FROM zotero_sync_state WHERE library_path = ?",
+        (library_base_path(),),
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def set_sync_version(conn: sqlite3.Connection, version: int) -> None:
+    if version <= 0:
+        return
+    conn.execute(
+        """
+        INSERT INTO zotero_sync_state (library_path, version, synced_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(library_path) DO UPDATE SET
+            version = MAX(zotero_sync_state.version, excluded.version),
+            synced_at = excluded.synced_at
+        """,
+        (
+            library_base_path(),
+            version,
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        ),
+    )
+
+
+def delete_papers(conn: sqlite3.Connection, zotero_keys: set[str]) -> int:
+    if not zotero_keys:
+        return 0
+    conn.executemany(
+        "DELETE FROM papers WHERE zotero_key = ?",
+        [(key,) for key in zotero_keys],
+    )
+    conn.executemany(
+        "DELETE FROM zotero_attachments WHERE parent_key = ?",
+        [(key,) for key in zotero_keys],
+    )
+    return len(zotero_keys)
 
 
 def ensure_papers_columns(conn: sqlite3.Connection) -> None:
@@ -463,6 +529,27 @@ def attach_existing_pdf_state(conn: sqlite3.Connection, papers: list[dict]) -> N
     }
     for paper in papers:
         paper.update(state_by_key.get(paper["zotero_key"], {}))
+
+
+def load_unique_pdf_candidates(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT zotero_key, title, pdf_status, pdf_path, pdf_attachment_key, pdf_md5
+        FROM unique_papers
+        ORDER BY date_modified DESC, zotero_key
+        """
+    ).fetchall()
+    return [
+        {
+            "zotero_key": row[0],
+            "title": row[1] or row[0],
+            "pdf_status": row[2] or "",
+            "pdf_path": row[3] or "",
+            "pdf_attachment_key": row[4] or "",
+            "pdf_md5": row[5] or "",
+        }
+        for row in rows
+    ]
 
 
 def assign_duplicates(
@@ -904,13 +991,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--limit",
         type=int,
-        default=default_sync_limit(),
-        help="Maximum top-level Zotero items to fetch. Default: ZOTERO_SYNC_LIMIT or 25.",
+        default=None,
+        help="Fetch only the most recent N top-level Zotero items. Manual check only.",
     )
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Fetch every top-level Zotero item instead of stopping at --limit.",
+        help="Force a full metadata refresh instead of using Zotero incremental sync.",
     )
     parser.add_argument(
         "--dry-run",
@@ -931,7 +1018,7 @@ def parse_args() -> argparse.Namespace:
         "--pdf-workers",
         type=int,
         default=default_pdf_workers(),
-        help="Parallel Zotero PDF checks/downloads. Default: ZOTERO_PDF_WORKERS or 4.",
+        help="Parallel Zotero PDF checks/downloads. Default: ZOTERO_PDF_WORKERS or 1.",
     )
     parser.add_argument(
         "--verbose-pdfs",
@@ -948,45 +1035,67 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     load_env_file(PROJECT_ROOT / ".env")
+    conn: sqlite3.Connection | None = None
     try:
         args = parse_args()
-        limit = None if args.all else args.limit
-        items = fetch_top_items(limit)
+
+        if args.dry_run:
+            dry_limit = None if args.all else (args.limit or DEFAULT_LIMIT)
+            items, latest_version = fetch_top_items(dry_limit)
+            papers = [paper for item in items if (paper := normalize_item(item))]
+            duplicates = assign_duplicates(papers, {})
+            skipped = len(items) - len(papers)
+            unique_count = len(papers) - len(duplicates)
+            unique_papers = [paper for paper in papers if not paper["is_duplicate"]]
+            print(f"Dry-run mode. Latest Zotero library version: {latest_version or 'unknown'}")
+            print(f"Fetched {len(items)} Zotero top-level items.")
+            print(
+                f"Paper-like items: {len(papers)} / unique: {unique_count} / "
+                f"duplicates: {len(duplicates)} / skipped: {skipped}"
+            )
+            print_sample(papers)
+            if args.download_pdfs:
+                pdf_report = download_unique_pdfs(
+                    sqlite3.connect(":memory:"),
+                    unique_papers,
+                    dry_run=True,
+                    force=args.force_pdf_download,
+                    verbose=args.verbose_pdfs,
+                    refresh_metadata=True,
+                    workers=args.pdf_workers,
+                )
+                print(f"PDF dry run: {pdf_report}")
+            print("Dry run: SQLite was not updated.")
+            return
+
+        conn = init_db(INDEX_DB_PATH)
+        previous_version = get_sync_version(conn)
+        incremental = bool(previous_version and not args.all and args.limit is None)
+        since = previous_version if incremental else None
+        limit = args.limit
+        items, latest_version = fetch_top_items(limit, since=since)
         papers = [paper for item in items if (paper := normalize_item(item))]
+        latest_version = max(latest_version, *(paper["version"] for paper in papers), 0)
     except ZoteroError as exc:
+        if conn is not None:
+            conn.close()
         raise SystemExit(f"Zotero sync failed: {exc}") from exc
 
-    if args.dry_run:
-        duplicates = assign_duplicates(papers, {})
-        skipped = len(items) - len(papers)
-        unique_count = len(papers) - len(duplicates)
-        unique_papers = [paper for paper in papers if not paper["is_duplicate"]]
-        print(f"Fetched {len(items)} Zotero top-level items.")
-        print(
-            f"Paper-like items: {len(papers)} / unique: {unique_count} / "
-            f"duplicates: {len(duplicates)} / skipped: {skipped}"
-        )
-        print_sample(papers)
-        if args.download_pdfs:
-            pdf_report = download_unique_pdfs(
-                sqlite3.connect(":memory:"),
-                unique_papers,
-                dry_run=True,
-                force=args.force_pdf_download,
-                verbose=args.verbose_pdfs,
-                refresh_metadata=True,
-                workers=args.pdf_workers,
-            )
-            print(f"PDF dry run: {pdf_report}")
-        print("Dry run: SQLite was not updated.")
-        return
-
-    conn = init_db(INDEX_DB_PATH)
     try:
+        deleted_keys: set[str] = set()
+        if incremental:
+            deleted_keys, deleted_version = fetch_deleted_items(previous_version)
+            latest_version = max(latest_version, deleted_version)
+
         duplicates = assign_duplicates(papers, load_primary_by_dedupe_key(conn))
         skipped = len(items) - len(papers)
         unique_count = len(papers) - len(duplicates)
         unique_papers = [paper for paper in papers if not paper["is_duplicate"]]
+        sync_mode = "incremental" if incremental else "full" if args.all else "limited" if args.limit else "initial-full"
+        print(
+            f"Zotero sync mode: {sync_mode} "
+            f"(previous_version={previous_version or 'none'}, latest_version={latest_version or 'unknown'})"
+        )
         print(f"Fetched {len(items)} Zotero top-level items.")
         print(
             f"Paper-like items: {len(papers)} / unique: {unique_count} / "
@@ -997,11 +1106,19 @@ def main() -> None:
         for paper in papers:
             upsert_paper(conn, paper)
 
+        deleted_count = delete_papers(conn, deleted_keys)
+        if deleted_count:
+            print(f"Deleted Zotero items removed from DB: {deleted_count}")
+
         if args.download_pdfs:
-            attach_existing_pdf_state(conn, unique_papers)
+            if args.refresh_pdf_metadata or args.force_pdf_download:
+                pdf_candidates = load_unique_pdf_candidates(conn)
+            else:
+                pdf_candidates = unique_papers
+            attach_existing_pdf_state(conn, pdf_candidates)
             pdf_report = download_unique_pdfs(
                 conn,
-                unique_papers,
+                pdf_candidates,
                 force=args.force_pdf_download,
                 verbose=args.verbose_pdfs,
                 refresh_metadata=args.refresh_pdf_metadata,
@@ -1009,9 +1126,12 @@ def main() -> None:
             )
             print(f"PDF sync: {pdf_report}")
 
+        if args.limit is None:
+            set_sync_version(conn, latest_version)
         conn.commit()
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
     print(f"Saved {len(papers)} papers to SQLite.")
     print(f"DB: {INDEX_DB_PATH}")

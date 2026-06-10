@@ -4,7 +4,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.nas.yml}"
-ZOTERO_ARGS="${ZOTERO_ARGS:---all --download-pdfs}"
+ZOTERO_ARGS="${ZOTERO_ARGS:---download-pdfs}"
 INGEST_ARGS="${INGEST_ARGS:---source-prefix zotero/}"
 
 if [ "${REBUILD:-0}" = "1" ]; then
