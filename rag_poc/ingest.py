@@ -1,8 +1,10 @@
+import argparse
 import hashlib
 import json
 import os
 import re
 import sqlite3
+import time
 from pathlib import Path
 
 import fitz
@@ -139,14 +141,15 @@ def source_name(path: Path) -> str:
     return path.relative_to(PAPERS_DIR).as_posix()
 
 
-def init_index_db(path: Path) -> sqlite3.Connection:
-    if path.exists():
-        path.unlink()
+def utc_now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
+
+def init_index_db(path: Path, rebuild: bool = False) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.execute(
         """
-        CREATE TABLE chunks (
+        CREATE TABLE IF NOT EXISTS chunks (
             id TEXT PRIMARY KEY,
             source TEXT NOT NULL,
             sha256 TEXT NOT NULL,
@@ -157,9 +160,147 @@ def init_index_db(path: Path) -> sqlite3.Connection:
         )
         """
     )
-    conn.execute("CREATE INDEX idx_chunks_source ON chunks(source)")
-    conn.execute("CREATE INDEX idx_chunks_sha256 ON chunks(sha256)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pdf_documents (
+            source TEXT PRIMARY KEY,
+            sha256 TEXT NOT NULL,
+            file_size INTEGER NOT NULL,
+            mtime_ns INTEGER NOT NULL,
+            chunk_count INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            duplicate_of TEXT,
+            error TEXT,
+            indexed_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_sha256 ON chunks(sha256)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pdf_documents_sha256 ON pdf_documents(sha256)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pdf_documents_status ON pdf_documents(status)")
+
+    if rebuild:
+        conn.execute("DELETE FROM chunks")
+        conn.execute("DELETE FROM pdf_documents")
+
     return conn
+
+
+def backfill_pdf_documents(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO pdf_documents (
+            source, sha256, file_size, mtime_ns, chunk_count, status,
+            duplicate_of, error, indexed_at
+        )
+        SELECT
+            source,
+            sha256,
+            0,
+            0,
+            COUNT(*),
+            'indexed',
+            NULL,
+            NULL,
+            ?
+        FROM chunks
+        GROUP BY source, sha256
+        """,
+        (utc_now(),),
+    )
+
+
+def delete_sources(conn: sqlite3.Connection, sources: list[str]) -> None:
+    if not sources:
+        return
+
+    placeholders = ",".join("?" for _ in sources)
+    conn.execute(f"DELETE FROM chunks WHERE source IN ({placeholders})", sources)
+    conn.execute(f"DELETE FROM pdf_documents WHERE source IN ({placeholders})", sources)
+
+
+def cleanup_removed_sources(conn: sqlite3.Connection, current_sources: set[str]) -> list[str]:
+    rows = conn.execute("SELECT source FROM pdf_documents").fetchall()
+    existing_sources = {row[0] for row in rows}
+    removed = sorted(existing_sources - current_sources)
+    delete_sources(conn, removed)
+    return removed
+
+
+def load_pdf_documents(conn: sqlite3.Connection) -> dict[str, dict]:
+    rows = conn.execute(
+        """
+        SELECT source, sha256, file_size, mtime_ns, chunk_count, status, duplicate_of
+        FROM pdf_documents
+        """
+    ).fetchall()
+    return {
+        row[0]: {
+            "source": row[0],
+            "sha256": row[1],
+            "file_size": row[2],
+            "mtime_ns": row[3],
+            "chunk_count": row[4],
+            "status": row[5],
+            "duplicate_of": row[6],
+        }
+        for row in rows
+    }
+
+
+def load_primary_source_by_hash(conn: sqlite3.Connection) -> dict[str, str]:
+    rows = conn.execute(
+        """
+        SELECT sha256, MIN(source)
+        FROM pdf_documents
+        WHERE status = 'indexed' AND chunk_count > 0
+        GROUP BY sha256
+        """
+    ).fetchall()
+    return {row[0]: row[1] for row in rows}
+
+
+def upsert_pdf_document(
+    conn: sqlite3.Connection,
+    *,
+    source: str,
+    sha256: str,
+    file_size: int,
+    mtime_ns: int,
+    chunk_count: int,
+    status: str,
+    duplicate_of: str | None = None,
+    error: str | None = None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO pdf_documents (
+            source, sha256, file_size, mtime_ns, chunk_count, status,
+            duplicate_of, error, indexed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source) DO UPDATE SET
+            sha256 = excluded.sha256,
+            file_size = excluded.file_size,
+            mtime_ns = excluded.mtime_ns,
+            chunk_count = excluded.chunk_count,
+            status = excluded.status,
+            duplicate_of = excluded.duplicate_of,
+            error = excluded.error,
+            indexed_at = excluded.indexed_at
+        """,
+        (
+            source,
+            sha256,
+            file_size,
+            mtime_ns,
+            chunk_count,
+            status,
+            duplicate_of,
+            error,
+            utc_now(),
+        ),
+    )
 
 
 def insert_chunk(conn: sqlite3.Connection, record: dict) -> None:
@@ -181,6 +322,14 @@ def insert_chunk(conn: sqlite3.Connection, record: dict) -> None:
     )
 
 
+def count_current_index(conn: sqlite3.Connection) -> tuple[int, int]:
+    indexed_pdfs = conn.execute(
+        "SELECT COUNT(*) FROM pdf_documents WHERE status = 'indexed' AND chunk_count > 0"
+    ).fetchone()[0]
+    chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    return indexed_pdfs, chunks
+
+
 def write_ingest_report(report: dict) -> None:
     INGEST_REPORT_PATH.write_text(
         json.dumps(report, ensure_ascii=False, indent=2),
@@ -188,7 +337,20 @@ def write_ingest_report(report: dict) -> None:
     )
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Incrementally index PDFs into the local SQLite RAG database."
+    )
+    parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Clear PDF chunks and PDF tracking tables before indexing. Zotero papers are preserved.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
     PAPERS_DIR.mkdir(parents=True, exist_ok=True)
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -197,37 +359,100 @@ def main() -> None:
         print(f"No PDFs found. Put PDFs in: {PAPERS_DIR}")
         return
 
-    total_chunks = 0
-    indexed_sources = []
+    chunks_added = 0
+    newly_indexed_sources = []
+    unchanged_sources = []
     zero_text_sources = []
     duplicate_sources = []
+    removed_sources = []
     seen_hashes: dict[str, str] = {}
-    conn = init_index_db(INDEX_DB_PATH)
+    current_sources = {source_name(pdf) for pdf in pdfs}
+    conn = init_index_db(INDEX_DB_PATH, rebuild=args.rebuild)
     try:
+        backfill_pdf_documents(conn)
+        removed_sources = cleanup_removed_sources(conn, current_sources)
+        existing_docs = load_pdf_documents(conn)
+        primary_source_by_hash = load_primary_source_by_hash(conn)
+
         for pdf in pdfs:
             source = source_name(pdf)
             print(f"Reading {source}")
             pdf_hash = file_sha256(pdf)
-            if pdf_hash in seen_hashes:
-                print(f"  skipping duplicate of {seen_hashes[pdf_hash]}")
+            stat = pdf.stat()
+            file_size = stat.st_size
+            mtime_ns = stat.st_mtime_ns
+
+            existing = existing_docs.get(source)
+            if existing and existing["sha256"] == pdf_hash:
+                status = existing["status"]
+                if status == "indexed" and existing["chunk_count"] > 0:
+                    print(f"  unchanged chunks={existing['chunk_count']}")
+                    unchanged_sources.append(source)
+                    seen_hashes.setdefault(pdf_hash, source)
+                    primary_source_by_hash.setdefault(pdf_hash, source)
+                    continue
+                if status == "zero_text":
+                    print("  unchanged zero-text")
+                    zero_text_sources.append(source)
+                    continue
+                if status == "duplicate":
+                    duplicate_of = existing["duplicate_of"]
+                    if duplicate_of in current_sources:
+                        print(f"  unchanged duplicate of {duplicate_of}")
+                        duplicate_sources.append(
+                            {
+                                "source": source,
+                                "duplicate_of": duplicate_of,
+                                "sha256": pdf_hash,
+                            }
+                        )
+                        continue
+                    print("  duplicate primary is gone; reindexing as primary")
+
+            duplicate_of = seen_hashes.get(pdf_hash) or primary_source_by_hash.get(pdf_hash)
+            if duplicate_of and duplicate_of != source:
+                print(f"  skipping duplicate of {duplicate_of}")
+                conn.execute("DELETE FROM chunks WHERE source = ?", (source,))
+                upsert_pdf_document(
+                    conn,
+                    source=source,
+                    sha256=pdf_hash,
+                    file_size=file_size,
+                    mtime_ns=mtime_ns,
+                    chunk_count=0,
+                    status="duplicate",
+                    duplicate_of=duplicate_of,
+                )
                 duplicate_sources.append(
                     {
                         "source": source,
-                        "duplicate_of": seen_hashes[pdf_hash],
+                        "duplicate_of": duplicate_of,
                         "sha256": pdf_hash,
                     }
                 )
                 continue
-            seen_hashes[pdf_hash] = source
+
+            conn.execute("DELETE FROM chunks WHERE source = ?", (source,))
 
             pages = remove_references(extract_pages(pdf))
             chunks = chunk_pages(pages)
             print(f"  pages={len(pages)} chunks={len(chunks)}")
             if not chunks:
+                upsert_pdf_document(
+                    conn,
+                    source=source,
+                    sha256=pdf_hash,
+                    file_size=file_size,
+                    mtime_ns=mtime_ns,
+                    chunk_count=0,
+                    status="zero_text",
+                )
                 zero_text_sources.append(source)
                 continue
 
-            indexed_sources.append(source)
+            newly_indexed_sources.append(source)
+            seen_hashes[pdf_hash] = source
+            primary_source_by_hash[pdf_hash] = source
 
             for i, chunk in enumerate(chunks, start=1):
                 try:
@@ -249,28 +474,49 @@ def main() -> None:
                     "embedding": vector,
                 }
                 insert_chunk(conn, record)
-                total_chunks += 1
+                chunks_added += 1
+
+            upsert_pdf_document(
+                conn,
+                source=source,
+                sha256=pdf_hash,
+                file_size=file_size,
+                mtime_ns=mtime_ns,
+                chunk_count=len(chunks),
+                status="indexed",
+            )
         conn.commit()
+        total_indexed_pdfs, total_chunks = count_current_index(conn)
     finally:
         conn.close()
 
     report = {
         "found_pdfs": len(pdfs),
-        "indexed_pdfs": len(indexed_sources),
+        "total_indexed_pdfs": total_indexed_pdfs,
+        "newly_indexed_pdfs": len(newly_indexed_sources),
+        "unchanged_pdfs": len(unchanged_sources),
         "zero_text_pdfs": len(zero_text_sources),
         "duplicate_pdfs": len(duplicate_sources),
-        "chunks": total_chunks,
-        "indexed_sources": indexed_sources,
+        "removed_pdfs": len(removed_sources),
+        "chunks_added": chunks_added,
+        "total_chunks": total_chunks,
+        "newly_indexed_sources": newly_indexed_sources,
+        "unchanged_sources": unchanged_sources,
         "zero_text_sources": zero_text_sources,
         "duplicate_sources": duplicate_sources,
+        "removed_sources": removed_sources,
     }
     write_ingest_report(report)
 
     print(
         "Done. "
-        f"Found {len(pdfs)} PDFs / indexed {len(indexed_sources)} PDFs / "
+        f"Found {len(pdfs)} PDFs / active indexed {total_indexed_pdfs} PDFs / "
+        f"newly indexed {len(newly_indexed_sources)} PDFs / "
+        f"unchanged {len(unchanged_sources)} PDFs / "
         f"zero-text {len(zero_text_sources)} PDFs / "
-        f"duplicates {len(duplicate_sources)} PDFs / chunks {total_chunks}."
+        f"duplicates {len(duplicate_sources)} PDFs / "
+        f"removed {len(removed_sources)} PDFs / "
+        f"chunks added {chunks_added} / total chunks {total_chunks}."
     )
     print(f"Index: {INDEX_DB_PATH}")
     print(f"Report: {INGEST_REPORT_PATH}")

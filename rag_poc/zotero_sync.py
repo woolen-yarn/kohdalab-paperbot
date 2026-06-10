@@ -5,6 +5,7 @@ import re
 import sqlite3
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -185,6 +186,31 @@ def item_journal(data: dict) -> str:
     return ""
 
 
+def normalize_doi(doi: str) -> str:
+    doi = doi.strip().lower()
+    doi = re.sub(r"^https?://(dx\.)?doi\.org/", "", doi)
+    doi = re.sub(r"^doi:\s*", "", doi)
+    return re.sub(r"\s+", "", doi)
+
+
+def normalize_title(title: str) -> str:
+    title = unicodedata.normalize("NFKC", title).casefold()
+    title = re.sub(r"[^a-z0-9]+", " ", title)
+    return re.sub(r"\s+", " ", title).strip()
+
+
+def make_dedupe_key(title: str, year: str, doi: str) -> str:
+    doi_norm = normalize_doi(doi)
+    if doi_norm:
+        return f"doi:{doi_norm}"
+
+    title_norm = normalize_title(title)
+    if title_norm:
+        return f"title:{title_norm}|year:{year}"
+
+    return ""
+
+
 def normalize_item(item: dict) -> dict | None:
     data = item.get("data") or {}
     item_type = data.get("itemType", "")
@@ -198,16 +224,24 @@ def normalize_item(item: dict) -> dict | None:
         if creator.get("creatorType") == "author" and (name := creator_name(creator))
     ]
     tags = [tag.get("tag", "") for tag in data.get("tags") or [] if tag.get("tag")]
+    title = data.get("title", "")
+    year = item_year(data)
+    doi = data.get("DOI", "")
 
     return {
         "zotero_key": data.get("key") or item.get("key") or "",
         "version": int(data.get("version") or item.get("version") or 0),
         "item_type": item_type,
-        "title": data.get("title", ""),
+        "title": title,
         "authors": authors,
-        "year": item_year(data),
+        "year": year,
         "journal": item_journal(data),
-        "doi": data.get("DOI", ""),
+        "doi": doi,
+        "doi_norm": normalize_doi(doi),
+        "title_norm": normalize_title(title),
+        "dedupe_key": make_dedupe_key(title, year, doi),
+        "is_duplicate": 0,
+        "duplicate_of": "",
         "url": data.get("url", ""),
         "abstract": data.get("abstractNote", ""),
         "tags": tags,
@@ -231,6 +265,11 @@ def init_db(path: Path) -> sqlite3.Connection:
             year TEXT,
             journal TEXT,
             doi TEXT,
+            doi_norm TEXT,
+            title_norm TEXT,
+            dedupe_key TEXT,
+            is_duplicate INTEGER NOT NULL DEFAULT 0,
+            duplicate_of TEXT,
             url TEXT,
             abstract TEXT,
             tags_json TEXT NOT NULL,
@@ -241,10 +280,80 @@ def init_db(path: Path) -> sqlite3.Connection:
         )
         """
     )
+    ensure_papers_columns(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_year ON papers(year)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_doi ON papers(doi)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_doi_norm ON papers(doi_norm)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_dedupe_key ON papers(dedupe_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_duplicate ON papers(is_duplicate)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_modified ON papers(date_modified)")
+    conn.execute(
+        """
+        CREATE VIEW IF NOT EXISTS unique_papers AS
+        SELECT * FROM papers
+        WHERE COALESCE(is_duplicate, 0) = 0
+        """
+    )
     return conn
+
+
+def ensure_papers_columns(conn: sqlite3.Connection) -> None:
+    existing = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(papers)").fetchall()
+    }
+    columns = {
+        "doi_norm": "TEXT",
+        "title_norm": "TEXT",
+        "dedupe_key": "TEXT",
+        "is_duplicate": "INTEGER NOT NULL DEFAULT 0",
+        "duplicate_of": "TEXT",
+    }
+    for name, column_type in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE papers ADD COLUMN {name} {column_type}")
+
+
+def load_primary_by_dedupe_key(conn: sqlite3.Connection) -> dict[str, str]:
+    rows = conn.execute(
+        """
+        SELECT dedupe_key, zotero_key
+        FROM papers
+        WHERE dedupe_key IS NOT NULL
+          AND dedupe_key != ''
+          AND COALESCE(is_duplicate, 0) = 0
+        ORDER BY date_added, zotero_key
+        """
+    ).fetchall()
+
+    primary_by_key = {}
+    for dedupe_key, zotero_key in rows:
+        primary_by_key.setdefault(dedupe_key, zotero_key)
+    return primary_by_key
+
+
+def assign_duplicates(
+    papers: list[dict], primary_by_key: dict[str, str]
+) -> list[dict]:
+    duplicates = []
+    for paper in papers:
+        paper["is_duplicate"] = 0
+        paper["duplicate_of"] = ""
+
+        dedupe_key = paper["dedupe_key"]
+        if not dedupe_key:
+            continue
+
+        primary = primary_by_key.get(dedupe_key)
+        if primary and primary != paper["zotero_key"]:
+            paper["is_duplicate"] = 1
+            paper["duplicate_of"] = primary
+            duplicates.append(paper)
+            continue
+
+        primary_by_key[dedupe_key] = paper["zotero_key"]
+
+    return duplicates
 
 
 def upsert_paper(conn: sqlite3.Connection, paper: dict) -> None:
@@ -253,9 +362,9 @@ def upsert_paper(conn: sqlite3.Connection, paper: dict) -> None:
         """
         INSERT INTO papers (
             zotero_key, version, item_type, title, authors_json, year, journal,
-            doi, url, abstract, tags_json, date_added, date_modified, synced_at,
-            zotero_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            doi, doi_norm, title_norm, dedupe_key, is_duplicate, duplicate_of,
+            url, abstract, tags_json, date_added, date_modified, synced_at, zotero_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(zotero_key) DO UPDATE SET
             version = excluded.version,
             item_type = excluded.item_type,
@@ -264,6 +373,11 @@ def upsert_paper(conn: sqlite3.Connection, paper: dict) -> None:
             year = excluded.year,
             journal = excluded.journal,
             doi = excluded.doi,
+            doi_norm = excluded.doi_norm,
+            title_norm = excluded.title_norm,
+            dedupe_key = excluded.dedupe_key,
+            is_duplicate = excluded.is_duplicate,
+            duplicate_of = excluded.duplicate_of,
             url = excluded.url,
             abstract = excluded.abstract,
             tags_json = excluded.tags_json,
@@ -281,6 +395,11 @@ def upsert_paper(conn: sqlite3.Connection, paper: dict) -> None:
             paper["year"],
             paper["journal"],
             paper["doi"],
+            paper["doi_norm"],
+            paper["title_norm"],
+            paper["dedupe_key"],
+            paper["is_duplicate"],
+            paper["duplicate_of"],
             paper["url"],
             paper["abstract"],
             json.dumps(paper["tags"], ensure_ascii=False),
@@ -341,17 +460,31 @@ def main() -> None:
     except ZoteroError as exc:
         raise SystemExit(f"Zotero sync failed: {exc}") from exc
 
-    skipped = len(items) - len(papers)
-    print(f"Fetched {len(items)} Zotero top-level items.")
-    print(f"Paper-like items: {len(papers)} / skipped: {skipped}")
-    print_sample(papers)
-
     if args.dry_run:
+        duplicates = assign_duplicates(papers, {})
+        skipped = len(items) - len(papers)
+        unique_count = len(papers) - len(duplicates)
+        print(f"Fetched {len(items)} Zotero top-level items.")
+        print(
+            f"Paper-like items: {len(papers)} / unique: {unique_count} / "
+            f"duplicates: {len(duplicates)} / skipped: {skipped}"
+        )
+        print_sample(papers)
         print("Dry run: SQLite was not updated.")
         return
 
     conn = init_db(INDEX_DB_PATH)
     try:
+        duplicates = assign_duplicates(papers, load_primary_by_dedupe_key(conn))
+        skipped = len(items) - len(papers)
+        unique_count = len(papers) - len(duplicates)
+        print(f"Fetched {len(items)} Zotero top-level items.")
+        print(
+            f"Paper-like items: {len(papers)} / unique: {unique_count} / "
+            f"duplicates: {len(duplicates)} / skipped: {skipped}"
+        )
+        print_sample(papers)
+
         for paper in papers:
             upsert_paper(conn, paper)
         conn.commit()

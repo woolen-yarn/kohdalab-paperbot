@@ -98,7 +98,17 @@ cd /Users/kikuchikeito/projects/llm
 make ingest
 ```
 
-Restart `bot.py` after rebuilding the index, because the bot caches the index in memory.
+`make ingest` is incremental. Unchanged PDFs are skipped by SHA-256, exact
+duplicate PDFs are recorded but not embedded twice, and removed PDFs are removed
+from the chunk index.
+
+To force a full PDF chunk rebuild while preserving Zotero metadata:
+
+```bash
+make ingest INGEST_ARGS=--rebuild
+```
+
+Restart `bot.py` after updating the index, because the bot caches the index in memory.
 The RAG index is stored as:
 
 ```text
@@ -151,6 +161,11 @@ Metadata is stored in the `papers` table inside:
 ```text
 rag_poc/index/chunks.sqlite3
 ```
+
+Zotero sync is idempotent by `zotero_key`. If the same paper is registered as
+multiple Zotero items, PaperBot marks later matches as duplicates using DOI when
+available, otherwise normalized title plus year. Use the `unique_papers` SQLite
+view when you want only representative paper records.
 
 ## Logs
 
