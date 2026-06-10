@@ -144,6 +144,7 @@ ZOTERO_LIBRARY_TYPE=group
 ZOTERO_LIBRARY_ID=1234567
 ZOTERO_API_KEY=...
 ZOTERO_SYNC_LIMIT=25
+ZOTERO_PDF_WORKERS=4
 ```
 
 Then fetch recent top-level Zotero items and save paper metadata into SQLite:
@@ -179,7 +180,9 @@ make zotero ZOTERO_ARGS="--all --download-pdfs"
 By default, unchanged PDFs are not printed one by one. Add `--verbose-pdfs` if
 you need a full per-PDF log. Already downloaded PDFs and known no-PDF items are
 also skipped without checking child attachments again. Add `--refresh-pdf-metadata`
-when you want to re-check every Zotero item.
+when you want to re-check every Zotero item. New or unknown PDF items are checked
+in parallel. Tune this with `ZOTERO_PDF_WORKERS` or `--pdf-workers`; `2` to `4`
+is usually a good range on the DS920+.
 
 PDFs are saved under:
 
@@ -216,7 +219,13 @@ sudo ./scripts/sync_zotero_pipeline.sh
 
 It checks Ollama, syncs Zotero metadata, downloads unique PDFs, ingests
 `rag_poc/papers/zotero/` incrementally, restarts PaperBot, and prints a count
-report. To force a first-time Zotero-only rebuild:
+report. To temporarily change PDF parallelism:
+
+```bash
+sudo ZOTERO_ARGS="--all --download-pdfs --pdf-workers 2" ./scripts/sync_zotero_pipeline.sh
+```
+
+To force a first-time Zotero-only rebuild:
 
 ```bash
 sudo REBUILD=1 ./scripts/sync_zotero_pipeline.sh

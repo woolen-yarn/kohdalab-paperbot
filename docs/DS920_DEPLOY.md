@@ -59,6 +59,7 @@ ZOTERO_LIBRARY_TYPE=group
 ZOTERO_LIBRARY_ID=1234567
 ZOTERO_API_KEY=...
 ZOTERO_SYNC_LIMIT=25
+ZOTERO_PDF_WORKERS=4
 ```
 
 ## 3. PDF/indexを置く
@@ -114,6 +115,8 @@ docker compose -f docker-compose.nas.yml run --rm ingest
 PDFは `rag_poc/papers/zotero/` に保存されます。既に同じPDFがある場合は差分判定でスキップされます。
 通常ログでは unchanged PDF は1件ずつ表示しません。全部見たい場合だけ `--verbose-pdfs` を付けます。
 通常実行では取得済みPDFとPDFなし確認済みitemはZoteroのchild attachment確認もスキップします。
+未確認PDFだけ並列で確認/取得します。並列数は `.env` の `ZOTERO_PDF_WORKERS` または
+`--pdf-workers` で調整できます。DS920+ではまず `2` から `4` がおすすめです。
 全itemを再確認したい場合だけ `--refresh-pdf-metadata` を付けます。
 
 Zotero由来PDFだけでRAG indexを作る場合、初回だけ:
@@ -133,6 +136,13 @@ docker compose -f docker-compose.nas.yml run --rm ingest python rag_poc/ingest.p
 ```bash
 cd /volume1/docker/paperbot
 sudo ./scripts/sync_zotero_pipeline.sh
+```
+
+一時的にPDF取得の並列数を変える場合:
+
+```bash
+cd /volume1/docker/paperbot
+sudo ZOTERO_ARGS="--all --download-pdfs --pdf-workers 2" ./scripts/sync_zotero_pipeline.sh
 ```
 
 初回だけZotero由来PDFでRAG indexを作り直す場合:
