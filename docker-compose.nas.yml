@@ -51,3 +51,15 @@ services:
       - ./rag_poc/index:/app/rag_poc/index
       - ./logs:/app/logs
     command: ["python", "rag_poc/zotero_sync.py"]
+
+  paper-watch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["tools"]
+    env_file:
+      - .env
+    volumes:
+      - ./rag_poc/index:/app/rag_poc/index
+      - ./logs:/app/logs
+    command: ["python", "-m", "rag_poc.paper_watch"]
