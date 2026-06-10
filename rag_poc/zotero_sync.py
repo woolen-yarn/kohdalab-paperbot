@@ -10,6 +10,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 
@@ -22,6 +23,7 @@ ZOTERO_PDF_DIR = PAPERS_DIR / "zotero"
 
 DEFAULT_API_BASE_URL = "https://api.zotero.org"
 DEFAULT_LIMIT = 25
+DEFAULT_PDF_WORKERS = 4
 REQUEST_BATCH_SIZE = 100
 SKIPPED_ITEM_TYPES = {"attachment", "note"}
 
@@ -52,6 +54,14 @@ def default_sync_limit() -> int:
         return int(value)
     except ValueError as exc:
         raise ZoteroError("ZOTERO_SYNC_LIMIT must be an integer.") from exc
+
+
+def default_pdf_workers() -> int:
+    value = env("ZOTERO_PDF_WORKERS", str(DEFAULT_PDF_WORKERS))
+    try:
+        return max(1, int(value))
+    except ValueError as exc:
+        raise ZoteroError("ZOTERO_PDF_WORKERS must be an integer.") from exc
 
 
 class ZoteroError(RuntimeError):
@@ -675,6 +685,144 @@ def download_attachment_file(attachment_key: str, dest: Path) -> tuple[str, dict
     return file_md5(dest), headers
 
 
+def is_known_pdf_state(
+    paper: dict,
+    *,
+    dry_run: bool,
+    force: bool,
+    refresh_metadata: bool,
+) -> bool:
+    pdf_status = paper.get("pdf_status") or ""
+    pdf_path = paper.get("pdf_path") or ""
+    if dry_run or force or refresh_metadata:
+        return False
+    if pdf_status == "downloaded" and pdf_path and (PAPERS_DIR / pdf_path).exists():
+        return True
+    return pdf_status == "no_pdf"
+
+
+def sync_one_pdf(
+    paper: dict,
+    *,
+    dry_run: bool,
+    force: bool,
+) -> dict:
+    paper_key = paper["zotero_key"]
+    try:
+        children = fetch_children(paper_key)
+        attachment = select_pdf_attachment(children)
+        if not attachment:
+            return {
+                "status": "no_pdf",
+                "paper_key": paper_key,
+                "attachment": None,
+                "path": "",
+                "md5": "",
+                "error": "",
+            }
+
+        data = attachment.get("data") or {}
+        attachment_key = data.get("key") or attachment.get("key")
+        if not attachment_key:
+            raise ZoteroError("PDF attachment has no key.")
+
+        remote_md5 = (data.get("md5") or "").lower()
+        remote_mtime = attachment_mtime_seconds(data.get("mtime"))
+        dest = zotero_pdf_path(paper_key, attachment_key)
+        rel_path = dest.relative_to(PAPERS_DIR).as_posix()
+
+        if dry_run:
+            return {
+                "status": "dry_run",
+                "paper_key": paper_key,
+                "attachment": attachment,
+                "path": rel_path,
+                "md5": remote_md5,
+                "error": "",
+            }
+
+        if should_skip_pdf(dest, remote_md5, force):
+            local_md5 = file_md5(dest) if dest.exists() else remote_md5
+            return {
+                "status": "unchanged",
+                "paper_key": paper_key,
+                "attachment": attachment,
+                "path": rel_path,
+                "md5": local_md5,
+                "error": "",
+            }
+
+        local_md5, _headers = download_attachment_file(attachment_key, dest)
+        if remote_mtime is not None:
+            os.utime(dest, (remote_mtime, remote_mtime))
+        return {
+            "status": "downloaded",
+            "paper_key": paper_key,
+            "attachment": attachment,
+            "path": rel_path,
+            "md5": local_md5,
+            "error": "",
+        }
+    except (OSError, ZoteroError) as exc:
+        return {
+            "status": "failed",
+            "paper_key": paper_key,
+            "attachment": None,
+            "path": "",
+            "md5": "",
+            "error": str(exc),
+        }
+
+
+def apply_pdf_result(conn: sqlite3.Connection, result: dict, *, dry_run: bool) -> None:
+    if dry_run:
+        return
+
+    status = result["status"]
+    paper_key = result["paper_key"]
+    attachment = result.get("attachment")
+
+    if status == "no_pdf":
+        upsert_attachment_status(
+            conn,
+            attachment=None,
+            parent_key=paper_key,
+            status="no_pdf",
+        )
+        update_paper_pdf_status(conn, paper_key=paper_key, status="no_pdf")
+        return
+
+    if status in {"unchanged", "downloaded"}:
+        data = (attachment or {}).get("data") or {}
+        attachment_key = data.get("key") or (attachment or {}).get("key") or ""
+        upsert_attachment_status(
+            conn,
+            attachment=attachment,
+            parent_key=paper_key,
+            path=result["path"],
+            status=status,
+        )
+        update_paper_pdf_status(
+            conn,
+            paper_key=paper_key,
+            attachment_key=attachment_key,
+            path=result["path"],
+            md5=result["md5"],
+            status="downloaded",
+        )
+        return
+
+    if status == "failed":
+        upsert_attachment_status(
+            conn,
+            attachment=None,
+            parent_key=paper_key,
+            status="failed",
+            error=result["error"],
+        )
+        update_paper_pdf_status(conn, paper_key=paper_key, status="failed")
+
+
 def download_unique_pdfs(
     conn: sqlite3.Connection,
     unique_papers: list[dict],
@@ -683,6 +831,7 @@ def download_unique_pdfs(
     force: bool = False,
     verbose: bool = False,
     refresh_metadata: bool = False,
+    workers: int = DEFAULT_PDF_WORKERS,
 ) -> dict:
     report = {
         "checked": 0,
@@ -693,133 +842,57 @@ def download_unique_pdfs(
         "failed": 0,
     }
 
+    pending = []
     for paper in unique_papers:
         paper_key = paper["zotero_key"]
         title = paper["title"] or paper_key
-        pdf_status = paper.get("pdf_status") or ""
-        pdf_path = paper.get("pdf_path") or ""
-        if (
-            not dry_run
-            and not force
-            and not refresh_metadata
-            and pdf_status == "downloaded"
-            and pdf_path
-            and (PAPERS_DIR / pdf_path).exists()
+        if is_known_pdf_state(
+            paper,
+            dry_run=dry_run,
+            force=force,
+            refresh_metadata=refresh_metadata,
         ):
             report["skipped_known"] += 1
             if verbose:
-                print(f"PDF {paper_key}: skipped known downloaded {pdf_path}")
+                print(f"PDF {paper_key}: skipped known {paper.get('pdf_status') or ''}")
             continue
 
-        if (
-            not dry_run
-            and not force
-            and not refresh_metadata
-            and pdf_status == "no_pdf"
-        ):
-            report["skipped_known"] += 1
-            if verbose:
-                print(f"PDF {paper_key}: skipped known no_pdf")
-            continue
-
-        report["checked"] += 1
         if verbose:
             print(f"PDF {paper_key}: {title}")
+        pending.append(paper)
 
-        try:
-            children = fetch_children(paper_key)
-            attachment = select_pdf_attachment(children)
-            if not attachment:
-                if verbose:
-                    print(f"PDF {paper_key}: no PDF attachment")
-                report["no_pdf"] += 1
-                if not dry_run:
-                    upsert_attachment_status(
-                        conn,
-                        attachment=None,
-                        parent_key=paper_key,
-                        status="no_pdf",
-                    )
-                    update_paper_pdf_status(
-                        conn,
-                        paper_key=paper_key,
-                        status="no_pdf",
-                    )
-                continue
+    report["checked"] = len(pending)
+    if not pending:
+        return report
 
-            data = attachment.get("data") or {}
-            attachment_key = data.get("key") or attachment.get("key")
-            if not attachment_key:
-                raise ZoteroError("PDF attachment has no key.")
-            remote_md5 = (data.get("md5") or "").lower()
-            remote_mtime = attachment_mtime_seconds(data.get("mtime"))
-            dest = zotero_pdf_path(paper_key, attachment_key)
-            rel_path = dest.relative_to(PAPERS_DIR).as_posix()
+    worker_count = max(1, min(workers, len(pending)))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [
+            executor.submit(sync_one_pdf, paper, dry_run=dry_run, force=force)
+            for paper in pending
+        ]
+        for future in as_completed(futures):
+            result = future.result()
+            status = result["status"]
+            paper_key = result["paper_key"]
+            if status in report:
+                report[status] += 1
+            apply_pdf_result(conn, result, dry_run=dry_run)
 
-            if dry_run:
-                print(f"PDF {paper_key}: would download {attachment_filename(attachment)} -> {rel_path}")
-                continue
-
-            if should_skip_pdf(dest, remote_md5, force):
-                if verbose:
-                    print(f"PDF {paper_key}: unchanged {rel_path}")
-                report["unchanged"] += 1
-                local_md5 = file_md5(dest) if dest.exists() else remote_md5
-                upsert_attachment_status(
-                    conn,
-                    attachment=attachment,
-                    parent_key=paper_key,
-                    path=rel_path,
-                    status="unchanged",
+            if status == "dry_run":
+                attachment = result.get("attachment") or {}
+                print(
+                    f"PDF {paper_key}: would download "
+                    f"{attachment_filename(attachment)} -> {result['path']}"
                 )
-                update_paper_pdf_status(
-                    conn,
-                    paper_key=paper_key,
-                    attachment_key=attachment_key,
-                    path=rel_path,
-                    md5=local_md5,
-                    status="downloaded",
-                )
-                continue
-
-            local_md5, _headers = download_attachment_file(attachment_key, dest)
-            if remote_mtime is not None:
-                os.utime(dest, (remote_mtime, remote_mtime))
-            print(f"PDF {paper_key}: downloaded {rel_path}")
-            report["downloaded"] += 1
-            upsert_attachment_status(
-                conn,
-                attachment=attachment,
-                parent_key=paper_key,
-                path=rel_path,
-                status="downloaded",
-            )
-            update_paper_pdf_status(
-                conn,
-                paper_key=paper_key,
-                attachment_key=attachment_key,
-                path=rel_path,
-                md5=local_md5,
-                status="downloaded",
-            )
-        except (OSError, ZoteroError) as exc:
-            print(f"PDF {paper_key}: failed: {exc}")
-            report["failed"] += 1
-            if not dry_run:
-                upsert_attachment_status(
-                    conn,
-                    attachment=None,
-                    parent_key=paper_key,
-                    status="failed",
-                    error=str(exc),
-                )
-                update_paper_pdf_status(
-                    conn,
-                    paper_key=paper_key,
-                    status="failed",
-                )
-
-        time.sleep(0.2)
+            elif status == "downloaded":
+                print(f"PDF {paper_key}: downloaded {result['path']}")
+            elif status == "failed":
+                print(f"PDF {paper_key}: failed: {result['error']}")
+            elif verbose and status == "unchanged":
+                print(f"PDF {paper_key}: unchanged {result['path']}")
+            elif verbose and status == "no_pdf":
+                print(f"PDF {paper_key}: no PDF attachment")
 
     return report
 
@@ -853,6 +926,12 @@ def parse_args() -> argparse.Namespace:
         "--force-pdf-download",
         action="store_true",
         help="Re-download PDFs even when the local copy appears unchanged.",
+    )
+    parser.add_argument(
+        "--pdf-workers",
+        type=int,
+        default=default_pdf_workers(),
+        help="Parallel Zotero PDF checks/downloads. Default: ZOTERO_PDF_WORKERS or 4.",
     )
     parser.add_argument(
         "--verbose-pdfs",
@@ -896,6 +975,7 @@ def main() -> None:
                 force=args.force_pdf_download,
                 verbose=args.verbose_pdfs,
                 refresh_metadata=True,
+                workers=args.pdf_workers,
             )
             print(f"PDF dry run: {pdf_report}")
         print("Dry run: SQLite was not updated.")
@@ -925,6 +1005,7 @@ def main() -> None:
                 force=args.force_pdf_download,
                 verbose=args.verbose_pdfs,
                 refresh_metadata=args.refresh_pdf_metadata,
+                workers=args.pdf_workers,
             )
             print(f"PDF sync: {pdf_report}")
 
