@@ -19,25 +19,42 @@ step() {
   printf '\n==> %s\n' "$1"
 }
 
+notify_failure() {
+  status="$1"
+  message="$2"
+  compose run --rm -T zotero python -m rag_poc.sync_notify failure \
+    --exit-code "$status" \
+    --message "$message" || true
+}
+
+run_or_notify() {
+  if "$@"; then
+    return 0
+  fi
+  status="$?"
+  notify_failure "$status" "Step failed: $*"
+  exit "$status"
+}
+
 step "Ensure runtime directories"
 mkdir -p rag_poc/papers/zotero rag_poc/index logs
 
 step "Check Ollama embedding endpoint"
-compose run --rm zotero python -c 'import os; from rag_poc.ollama_client import embed, base_url; model=os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text"); embed("paperbot connectivity test", model, timeout=60); print(f"ok {base_url()} {model}")'
+run_or_notify compose run --rm zotero python -c 'import os; from rag_poc.ollama_client import embed, base_url; model=os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text"); embed("paperbot connectivity test", model, timeout=60); print(f"ok {base_url()} {model}")'
 
 step "Sync Zotero metadata and unique PDFs"
-compose run --rm zotero python rag_poc/zotero_sync.py $ZOTERO_ARGS
+run_or_notify compose run --rm zotero python rag_poc/zotero_sync.py $ZOTERO_ARGS
 
 step "Ingest Zotero PDFs"
-compose run --rm ingest python rag_poc/ingest.py $INGEST_ARGS
+run_or_notify compose run --rm ingest python rag_poc/ingest.py $INGEST_ARGS
 
 if [ "${SKIP_RESTART:-0}" != "1" ]; then
   step "Restart PaperBot"
-  compose restart paperbot
+  run_or_notify compose restart paperbot
 fi
 
 step "Pipeline report"
-compose run --rm -T zotero python - <<'PY'
+if compose run --rm -T zotero python - <<'PY'
 import sqlite3
 from pathlib import Path
 
@@ -83,5 +100,15 @@ print(f"chunks={chunks}")
 print(f"indexed_pdfs={indexed_pdfs}")
 conn.close()
 PY
+then
+  :
+else
+  status="$?"
+  notify_failure "$status" "Step failed: Pipeline report"
+  exit "$status"
+fi
+
+step "Notify Slack"
+compose run --rm -T zotero python -m rag_poc.sync_notify success || true
 
 step "Done"

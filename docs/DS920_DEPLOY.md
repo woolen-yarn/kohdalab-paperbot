@@ -54,6 +54,8 @@ OLLAMA_EMBED_MODEL=nomic-embed-text
 PAPERBOT_TOP_K=6
 PAPERBOT_SHORT_TOP_K=3
 PAPERBOT_DEEP_TOP_K=8
+SYNC_NOTIFY_CHANNEL=#paperbot-log
+SYNC_NOTIFY_MODE=errors_only
 
 ZOTERO_LIBRARY_TYPE=group
 ZOTERO_LIBRARY_ID=1234567
@@ -62,6 +64,12 @@ ZOTERO_PDF_WORKERS=1
 ```
 
 ## 3. PDF/indexを置く
+
+Slack同期通知を使う場合は、PaperBotを `#paperbot-log` に招待してください。
+`SYNC_NOTIFY_MODE=errors_only` なら失敗時だけ通知します。
+`changes` にすると、失敗時に加えて新規/変更があった成功同期だけ通知します。
+もしSlack側で `channel_not_found` になる場合は、`#paperbot-log` ではなくチャンネルIDを
+`SYNC_NOTIFY_CHANNEL` に設定してください。
 
 PDF:
 
