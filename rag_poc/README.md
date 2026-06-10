@@ -89,6 +89,9 @@ papers  Zotero論文メタデータ
 unique_papers  重複を除いたZotero論文メタデータview
 ```
 
+`chunks.source` が `papers.pdf_path` と一致する場合、回答のSourcesはPDFファイル名ではなく
+Zotero metadataのtitle/year/author/journalを使って表示されます。
+
 ## 5. 質問する
 
 ```bash

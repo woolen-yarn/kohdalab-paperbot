@@ -66,7 +66,9 @@ Persistent Spin Helixに関係する内容を教えて
 ```
 
 The bot should reply with an answer and short `Sources` such as `S1, S2, S3`.
-Send `sources` to show the full source list from your previous answer.
+Send `sources` to show the full source list from your previous answer. When a
+PDF came from Zotero, source entries use Zotero metadata such as title, year,
+first author, and journal instead of only the PDF filename.
 
 In DM, PaperBot replies as normal sequential messages. In channel mentions, it replies in a thread to avoid cluttering the channel.
 

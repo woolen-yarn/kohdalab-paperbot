@@ -122,7 +122,7 @@ def ask_rag(question: str) -> RagResult:
 def latest_papers(limit: int = 8) -> list[Path]:
     if not PAPERS_DIR.exists():
         return []
-    papers = [path for path in PAPERS_DIR.glob("*.pdf") if path.is_file()]
+    papers = [path for path in PAPERS_DIR.rglob("*.pdf") if path.is_file()]
     papers.sort(key=lambda path: path.stat().st_mtime, reverse=True)
     return papers[:limit]
 
@@ -172,7 +172,8 @@ def command_recent() -> str:
         return "NAS上の `rag_poc/papers` にPDFがまだ見つかりません。"
     lines = ["*Recent PDFs*"]
     for i, path in enumerate(papers, start=1):
-        lines.append(f"{i}. {path.name}")
+        source = path.relative_to(PAPERS_DIR).as_posix()
+        lines.append(f"{i}. {source}")
     return "\n".join(lines)
 
 

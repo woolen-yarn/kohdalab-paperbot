@@ -170,6 +170,7 @@ def load_chunks() -> tuple[dict, ...]:
     conn = sqlite3.connect(INDEX_DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
+        metadata_by_source = load_metadata_by_source(conn)
         rows = conn.execute(
             """
             SELECT id, source, sha256, page_start, page_end, text, embedding_json
@@ -178,10 +179,13 @@ def load_chunks() -> tuple[dict, ...]:
             """
         )
         for row in rows:
+            metadata = metadata_by_source.get(row["source"], {})
             chunks.append(
                 {
                     "id": row["id"],
                     "source": row["source"],
+                    "source_label": format_source_label(row["source"], metadata),
+                    "paper": metadata,
                     "sha256": row["sha256"],
                     "page_start": row["page_start"],
                     "page_end": row["page_end"],
@@ -192,6 +196,77 @@ def load_chunks() -> tuple[dict, ...]:
     finally:
         conn.close()
     return tuple(chunks)
+
+
+def load_metadata_by_source(conn: sqlite3.Connection) -> dict[str, dict]:
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                pdf_path,
+                zotero_key,
+                title,
+                authors_json,
+                year,
+                journal,
+                doi
+            FROM papers
+            WHERE pdf_path IS NOT NULL
+              AND pdf_path != ''
+              AND COALESCE(is_duplicate, 0) = 0
+            """
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+
+    metadata = {}
+    for row in rows:
+        metadata[row["pdf_path"]] = {
+            "zotero_key": row["zotero_key"],
+            "title": row["title"] or "",
+            "authors": parse_authors(row["authors_json"]),
+            "year": row["year"] or "",
+            "journal": row["journal"] or "",
+            "doi": row["doi"] or "",
+        }
+    return metadata
+
+
+def parse_authors(authors_json: str) -> list[str]:
+    try:
+        authors = json.loads(authors_json or "[]")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(authors, list):
+        return []
+    return [str(author) for author in authors if author]
+
+
+def compact_authors(authors: list[str]) -> str:
+    if not authors:
+        return ""
+    if len(authors) == 1:
+        return authors[0]
+    return f"{authors[0]} et al."
+
+
+def format_source_label(source: str, metadata: dict | None = None) -> str:
+    metadata = metadata or {}
+    title = metadata.get("title", "")
+    if not title:
+        return source
+
+    parts = [title]
+    year = metadata.get("year", "")
+    authors = compact_authors(metadata.get("authors", []))
+    journal = metadata.get("journal", "")
+    if year:
+        parts.append(f"({year})")
+    if authors:
+        parts.append(f"- {authors}")
+    if journal:
+        parts.append(f"- {journal}")
+    return " ".join(parts)
 
 
 def select_top_k(question: str) -> int:
@@ -273,7 +348,7 @@ def build_prompt(question: str, contexts: list[dict]) -> str:
     style_instruction = answer_style_instruction(question)
     context_text = "\n\n".join(
         (
-            f"Source S{i}: {ctx['source']} pp.{ctx['page_start']}-{ctx['page_end']} "
+            f"Source S{i}: {ctx['source_label']} pp.{ctx['page_start']}-{ctx['page_end']} "
             f"(score={ctx['score']:.3f})\n{ctx['text']}"
         )
         for i, ctx in enumerate(contexts, start=1)
@@ -335,9 +410,13 @@ def fallback_empty_answer() -> str:
 def format_sources(contexts: list[dict]) -> str:
     lines = []
     for i, ctx in enumerate(contexts, start=1):
+        source_label = ctx.get("source_label") or ctx["source"]
+        source_path = ctx["source"]
+        suffix = f" [{source_path}]" if source_label != source_path else ""
         lines.append(
-            f"S{i}: {ctx['source']} pp.{ctx['page_start']}-{ctx['page_end']} "
+            f"S{i}: {source_label} pp.{ctx['page_start']}-{ctx['page_end']} "
             f"score={ctx['score']:.3f}"
+            f"{suffix}"
         )
     return "\n".join(lines)
 
