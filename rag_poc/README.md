@@ -66,7 +66,9 @@ cd /Users/kikuchikeito/projects/llm
 make ingest
 ```
 
-`make ingest` は差分更新です。既に取り込まれている同一PDFはsha256でスキップし、
+`make ingest` は差分更新です。既に取り込まれているPDFは通常、file size と mtime が
+同じならPDF本文を読まずに高速スキップします。完全な整合性確認をしたい場合だけ
+`--verify-hash` を付けると、既存PDFもSHA-256で検証します。
 完全重複PDFは記録だけしてembeddingを重複作成しません。
 
 chunkを作り直したい場合:
@@ -148,6 +150,12 @@ make ingest INGEST_ARGS="--rebuild --source-prefix zotero/"
 ```bash
 make zotero ZOTERO_ARGS="--download-pdfs"
 make ingest INGEST_ARGS="--source-prefix zotero/"
+```
+
+既存PDFも読み込んでSHA-256を再確認する場合:
+
+```bash
+make ingest INGEST_ARGS="--source-prefix zotero/ --verify-hash"
 ```
 
 PDFはここに保存されます:

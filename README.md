@@ -105,9 +105,10 @@ cd /Users/kikuchikeito/projects/llm
 make ingest
 ```
 
-`make ingest` is incremental. Unchanged PDFs are skipped by SHA-256, exact
-duplicate PDFs are recorded but not embedded twice, and removed PDFs are removed
-from the chunk index.
+`make ingest` is incremental. Unchanged PDFs are normally skipped by file size
+and mtime without reading the PDF body. Use `--verify-hash` when you want to
+read unchanged PDFs and verify SHA-256. Exact duplicate PDFs are recorded but
+not embedded twice, and removed PDFs are removed from the chunk index.
 
 To force a full PDF chunk rebuild while preserving Zotero metadata:
 
@@ -216,6 +217,12 @@ After that first rebuild, regular incremental updates can use:
 
 ```bash
 make ingest INGEST_ARGS="--source-prefix zotero/"
+```
+
+For a slower full integrity check of unchanged PDFs:
+
+```bash
+make ingest INGEST_ARGS="--source-prefix zotero/ --verify-hash"
 ```
 
 On the NAS, the full Zotero update pipeline is:
