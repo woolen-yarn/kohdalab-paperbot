@@ -363,7 +363,72 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Only index PDFs whose source path starts with this prefix, e.g. zotero/.",
     )
+    parser.add_argument(
+        "--verify-hash",
+        action="store_true",
+        help="Read unchanged PDFs and verify SHA-256 instead of trusting file size and mtime.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print per-PDF unchanged/duplicate/zero-text skip messages.",
+    )
     return parser.parse_args()
+
+
+def is_quick_unchanged(existing: dict | None, file_size: int, mtime_ns: int) -> bool:
+    if not existing:
+        return False
+    return existing["file_size"] == file_size and existing["mtime_ns"] == mtime_ns
+
+
+def record_unchanged_document(
+    existing: dict,
+    source: str,
+    current_sources: set[str],
+    seen_hashes: dict[str, str],
+    primary_source_by_hash: dict[str, str],
+    unchanged_sources: list[str],
+    zero_text_sources: list[str],
+    duplicate_sources: list[dict],
+    *,
+    verbose: bool = False,
+) -> bool:
+    status = existing["status"]
+    pdf_hash = existing["sha256"]
+
+    if status == "indexed" and existing["chunk_count"] > 0:
+        if verbose:
+            print(f"Skipping unchanged {source} chunks={existing['chunk_count']}")
+        unchanged_sources.append(source)
+        seen_hashes.setdefault(pdf_hash, source)
+        primary_source_by_hash.setdefault(pdf_hash, source)
+        return True
+
+    if status == "zero_text":
+        if verbose:
+            print(f"Skipping unchanged zero-text {source}")
+        zero_text_sources.append(source)
+        return True
+
+    if status == "duplicate":
+        duplicate_of = existing["duplicate_of"]
+        if duplicate_of in current_sources:
+            if verbose:
+                print(f"Skipping unchanged duplicate {source} -> {duplicate_of}")
+            duplicate_sources.append(
+                {
+                    "source": source,
+                    "duplicate_of": duplicate_of,
+                    "sha256": pdf_hash,
+                }
+            )
+            return True
+
+        if verbose:
+            print(f"Duplicate primary is gone; reindexing {source} as primary")
+
+    return False
 
 
 def main() -> None:
@@ -396,29 +461,51 @@ def main() -> None:
 
         for pdf in pdfs:
             source = source_name(pdf)
-            print(f"Reading {source}")
-            pdf_hash = file_sha256(pdf)
             stat = pdf.stat()
             file_size = stat.st_size
             mtime_ns = stat.st_mtime_ns
 
             existing = existing_docs.get(source)
+            if (
+                not args.rebuild
+                and not args.verify_hash
+                and is_quick_unchanged(existing, file_size, mtime_ns)
+                and record_unchanged_document(
+                    existing,
+                    source,
+                    current_sources,
+                    seen_hashes,
+                    primary_source_by_hash,
+                    unchanged_sources,
+                    zero_text_sources,
+                    duplicate_sources,
+                    verbose=args.verbose,
+                )
+            ):
+                continue
+
+            print(f"Reading {source}")
+            pdf_hash = file_sha256(pdf)
+
             if existing and existing["sha256"] == pdf_hash:
                 status = existing["status"]
                 if status == "indexed" and existing["chunk_count"] > 0:
-                    print(f"  unchanged chunks={existing['chunk_count']}")
+                    if args.verbose:
+                        print(f"  unchanged chunks={existing['chunk_count']}")
                     unchanged_sources.append(source)
                     seen_hashes.setdefault(pdf_hash, source)
                     primary_source_by_hash.setdefault(pdf_hash, source)
                     continue
                 if status == "zero_text":
-                    print("  unchanged zero-text")
+                    if args.verbose:
+                        print("  unchanged zero-text")
                     zero_text_sources.append(source)
                     continue
                 if status == "duplicate":
                     duplicate_of = existing["duplicate_of"]
                     if duplicate_of in current_sources:
-                        print(f"  unchanged duplicate of {duplicate_of}")
+                        if args.verbose:
+                            print(f"  unchanged duplicate of {duplicate_of}")
                         duplicate_sources.append(
                             {
                                 "source": source,

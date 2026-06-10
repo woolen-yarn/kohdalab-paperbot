@@ -81,7 +81,9 @@ DS920+上で作り直す場合:
 docker compose -f docker-compose.nas.yml run --rm ingest
 ```
 
-通常の `ingest` は差分更新です。既存PDFはsha256でスキップされ、完全重複PDFは二重にembeddingされません。
+通常の `ingest` は差分更新です。既存PDFは通常、file size と mtime が同じならPDF本文を読まずに高速スキップされます。
+完全な整合性確認をしたい場合だけ `--verify-hash` を付けると、既存PDFもSHA-256で検証します。
+完全重複PDFは二重にembeddingされません。
 chunk設定やembeddingモデルを変えて全PDFを作り直す場合だけ:
 
 ```bash
@@ -135,6 +137,12 @@ docker compose -f docker-compose.nas.yml run --rm ingest python rag_poc/ingest.p
 
 ```bash
 docker compose -f docker-compose.nas.yml run --rm ingest python rag_poc/ingest.py --source-prefix zotero/
+```
+
+既存PDFも読み込んでSHA-256を再確認する場合:
+
+```bash
+docker compose -f docker-compose.nas.yml run --rm ingest python rag_poc/ingest.py --source-prefix zotero/ --verify-hash
 ```
 
 まとめて実行する場合:
