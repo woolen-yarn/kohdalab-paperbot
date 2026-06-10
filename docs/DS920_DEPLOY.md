@@ -125,6 +125,22 @@ docker compose -f docker-compose.nas.yml run --rm ingest python rag_poc/ingest.p
 docker compose -f docker-compose.nas.yml run --rm ingest python rag_poc/ingest.py --source-prefix zotero/
 ```
 
+まとめて実行する場合:
+
+```bash
+cd /volume1/docker/paperbot
+sudo ./scripts/sync_zotero_pipeline.sh
+```
+
+初回だけZotero由来PDFでRAG indexを作り直す場合:
+
+```bash
+cd /volume1/docker/paperbot
+sudo REBUILD=1 ./scripts/sync_zotero_pipeline.sh
+```
+
+Synologyのタスクスケジューラに登録する場合も、このコマンドを使います。
+
 ## 4. 起動
 
 SSHで実行できる場合:
@@ -192,6 +208,14 @@ Slackへつながらない:
 - `.env` の `SLACK_BOT_TOKEN` が `xoxb-...` か確認
 - `.env` の `SLACK_APP_TOKEN` が `xapp-...` か確認
 - Slack AppのSocket ModeがONか確認
+
+運用状態を確認したい:
+
+Slack DMで:
+
+```text
+status
+```
 
 PDFを更新したのに回答が変わらない:
 

@@ -79,6 +79,7 @@ PaperBot understands these commands in DM or mention replies:
 ```text
 /help      Show available commands
 /model     Show current Ollama chat/embedding model settings
+/status    Show DB counts and Ollama connectivity
 /sources   Show sources from your previous answer in the same DM/channel
 /recent    Show recent PDFs on the local papers volume
 ```
@@ -201,6 +202,21 @@ After that first rebuild, regular incremental updates can use:
 make ingest INGEST_ARGS="--source-prefix zotero/"
 ```
 
+On the NAS, the full Zotero update pipeline is:
+
+```bash
+cd /volume1/docker/paperbot
+sudo ./scripts/sync_zotero_pipeline.sh
+```
+
+It checks Ollama, syncs Zotero metadata, downloads unique PDFs, ingests
+`rag_poc/papers/zotero/` incrementally, restarts PaperBot, and prints a count
+report. To force a first-time Zotero-only rebuild:
+
+```bash
+sudo REBUILD=1 ./scripts/sync_zotero_pipeline.sh
+```
+
 ## Logs
 
 Runtime logs are written here:
@@ -236,6 +252,7 @@ docker-compose.stack-local.yml
 requirements.txt
 scripts/deploy_nas.sh
 scripts/reindex_nas.sh
+scripts/sync_zotero_pipeline.sh
 ```
 
 ## Check RTX PC Ollama

@@ -2,7 +2,10 @@ import logging
 import logging.handlers
 import os
 import re
+import sqlite3
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +16,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 PROJECT_ROOT = Path(__file__).resolve().parent
 LOG_DIR = PROJECT_ROOT / "logs"
 PAPERS_DIR = PROJECT_ROOT / "rag_poc" / "papers"
+INDEX_DB_PATH = PROJECT_ROOT / "rag_poc" / "index" / "chunks.sqlite3"
 LAST_RESULTS: dict[tuple[str, str], "RagResult"] = {}
 
 
@@ -140,6 +144,7 @@ def command_help() -> str:
             "*PaperBot commands*",
             "`/help`  このヘルプを表示",
             "`/model`  現在のLLM/embedding設定を表示",
+            "`/status`  DB件数とOllama疎通を表示",
             "`/sources`  直前の回答で使ったSourcesをもう一度表示",
             "`/recent`  NAS上の最近のPDFを表示",
             "",
@@ -160,6 +165,100 @@ def command_model() -> str:
             f"`PAPERBOT_DEEP_TOP_K`: `{DEEP_TOP_K}`",
         ]
     )
+
+
+def scalar(conn: sqlite3.Connection, sql: str, default=0):
+    try:
+        value = conn.execute(sql).fetchone()[0]
+    except (sqlite3.Error, TypeError):
+        return default
+    return default if value is None else value
+
+
+def table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    return bool(
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = ? AND type IN ('table', 'view')",
+            (name,),
+        ).fetchone()
+    )
+
+
+def ollama_status() -> str:
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://10.32.145.143:11434").rstrip("/")
+    try:
+        with urllib.request.urlopen(f"{base_url}/api/tags", timeout=3) as res:
+            body = res.read().decode("utf-8")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return f"`unreachable` ({exc})"
+
+    model_names = set(re.findall(r'"name"\s*:\s*"([^"]+)"', body))
+    chat_ok = CHAT_MODEL in model_names
+    embed_ok = EMBED_MODEL in model_names
+    return (
+        f"`ok` chat=`{CHAT_MODEL}` {'ok' if chat_ok else 'missing'} / "
+        f"embed=`{EMBED_MODEL}` {'ok' if embed_ok else 'missing'}"
+    )
+
+
+def command_status() -> str:
+    lines = ["*PaperBot status*"]
+    lines.append(f"Ollama: {ollama_status()}")
+
+    if not INDEX_DB_PATH.exists():
+        lines.append(f"SQLite: `missing` `{INDEX_DB_PATH}`")
+        return "\n".join(lines)
+
+    conn = sqlite3.connect(INDEX_DB_PATH)
+    try:
+        lines.append(f"SQLite: `ok` `{INDEX_DB_PATH.name}`")
+
+        if table_exists(conn, "papers"):
+            papers = scalar(conn, "SELECT COUNT(*) FROM papers")
+            unique = (
+                scalar(conn, "SELECT COUNT(*) FROM unique_papers")
+                if table_exists(conn, "unique_papers")
+                else 0
+            )
+            duplicates = scalar(
+                conn,
+                "SELECT COUNT(*) FROM papers WHERE COALESCE(is_duplicate, 0) = 1",
+            )
+            last_sync = scalar(conn, "SELECT MAX(synced_at) FROM papers", "n/a")
+            downloaded = scalar(conn, "SELECT COUNT(*) FROM papers WHERE pdf_status = 'downloaded'")
+            no_pdf = scalar(conn, "SELECT COUNT(*) FROM papers WHERE pdf_status = 'no_pdf'")
+            failed_pdf = scalar(conn, "SELECT COUNT(*) FROM papers WHERE pdf_status = 'failed'")
+            lines.append(
+                f"Zotero: papers=`{papers}` unique=`{unique}` duplicates=`{duplicates}` "
+                f"last_sync=`{last_sync}`"
+            )
+            lines.append(
+                f"Zotero PDFs: downloaded=`{downloaded}` no_pdf=`{no_pdf}` failed=`{failed_pdf}`"
+            )
+
+        if table_exists(conn, "chunks"):
+            chunks = scalar(conn, "SELECT COUNT(*) FROM chunks")
+            lines.append(f"RAG chunks: `{chunks}`")
+
+        if table_exists(conn, "pdf_documents"):
+            indexed = scalar(
+                conn,
+                "SELECT COUNT(*) FROM pdf_documents WHERE status = 'indexed' AND chunk_count > 0",
+            )
+            zero_text = scalar(conn, "SELECT COUNT(*) FROM pdf_documents WHERE status = 'zero_text'")
+            duplicate_pdf = scalar(conn, "SELECT COUNT(*) FROM pdf_documents WHERE status = 'duplicate'")
+            last_index = scalar(conn, "SELECT MAX(indexed_at) FROM pdf_documents", "n/a")
+            lines.append(
+                f"Indexed PDFs: indexed=`{indexed}` zero_text=`{zero_text}` "
+                f"duplicates=`{duplicate_pdf}` last_index=`{last_index}`"
+            )
+    finally:
+        conn.close()
+
+    zotero_dir = PAPERS_DIR / "zotero"
+    zotero_pdf_count = len(list(zotero_dir.rglob("*.pdf"))) if zotero_dir.exists() else 0
+    lines.append(f"Local Zotero PDFs: `{zotero_pdf_count}`")
+    return "\n".join(lines)
 
 
 def command_sources(channel: str, user: str) -> str:
@@ -190,6 +289,8 @@ def handle_command(text: str, channel: str, user: str) -> str | None:
         return command_help()
     if command in {"/model", "model"}:
         return command_model()
+    if command in {"/status", "status"}:
+        return command_status()
     if command in {"/sources", "sources"}:
         return command_sources(channel, user)
     if command in {"/recent", "recent"}:
