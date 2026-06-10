@@ -123,14 +123,19 @@ new papers or PDFs were picked up without seeing a message every day.
 
 ## Paper Watch
 
-Paper Watch finds recent arXiv papers, scores them against the lab profile, and
+Paper Watch finds recent arXiv and Crossref papers, scores them against the lab profile, and
 posts unposted relevant papers to Slack. Create or choose a channel such as
 `#paper`, invite PaperBot, and set:
 
 ```text
 PAPER_WATCH_CHANNEL=#paper
+PAPER_WATCH_SOURCES=arxiv,crossref
+PAPER_WATCH_CONTACT_EMAIL=your-email@example.edu
 PAPER_WATCH_LOOKBACK_DAYS=14
 PAPER_WATCH_MAX_RESULTS=80
+PAPER_WATCH_CROSSREF_ROWS=10
+PAPER_WATCH_CROSSREF_MAX_QUERIES=2
+PAPER_WATCH_CROSSREF_SLEEP_SECONDS=1
 PAPER_WATCH_POST_LIMIT=5
 PAPER_WATCH_MIN_SCORE=6
 PAPER_WATCH_BILINGUAL_INTRO=true
@@ -162,6 +167,12 @@ Paper Watchは、研究プロファイル語による `term_score` と、既存P
 デフォルトでタイトル、著者、日英紹介、リンク、近かった研究室PDFだけを表示します。
 `PAPER_WATCH_VERBOSE_MESSAGE=true` にすると `score`, `term`, `rag` などの詳細も
 表示します。`PAPER_WATCH_INCLUDE_ABSTRACT=true` にすると Abstract も表示します。
+
+Crossref access is deliberately conservative. By default, Paper Watch sends at
+most two Crossref queries per run, each with ten rows, and sleeps one second
+between Crossref requests. Set `PAPER_WATCH_CONTACT_EMAIL` so Crossref receives
+a polite `mailto` parameter and User-Agent. If Crossref returns `429` or another
+client-side 4XX response, Paper Watch stops Crossref fetching for that run.
 
 The default profile includes topics such as Persistent Spin Helix, Rashba,
 Dresselhaus, spin diffusion, TRKR, semiconductor spintronics, 2D magnets,

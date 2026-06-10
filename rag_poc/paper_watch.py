@@ -1,4 +1,5 @@
 import argparse
+import html
 import json
 import math
 import os
@@ -29,6 +30,7 @@ INDEX_DB_PATH = INDEX_DIR / "chunks.sqlite3"
 LAB_PROFILE_PATH = INDEX_DIR / "lab_profile.json"
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
+CROSSREF_API_URL = "https://api.crossref.org/works"
 ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
 
 DEFAULT_TERMS = {
@@ -129,6 +131,58 @@ def normalize_arxiv_id(url: str) -> str:
     return re.sub(r"v\d+$", "", arxiv_id)
 
 
+def normalize_doi(value: str) -> str:
+    doi = compact_whitespace(value).lower()
+    doi = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", doi)
+    doi = re.sub(r"^doi:\s*", "", doi)
+    return doi.strip()
+
+
+def normalize_title_for_dedupe(title: str) -> str:
+    normalized = compact_whitespace(html.unescape(title)).lower()
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    return compact_whitespace(normalized)
+
+
+def entry_dedupe_key(entry: dict) -> str:
+    doi = normalize_doi(entry.get("doi", ""))
+    if doi:
+        return f"doi:{doi}"
+    title = normalize_title_for_dedupe(entry.get("title", ""))
+    return f"title:{title}" if title else f"{entry['source']}:{entry['external_id']}"
+
+
+def strip_markup(text: str) -> str:
+    text = html.unescape(text or "")
+    text = re.sub(r"<[^>]+>", " ", text)
+    return compact_whitespace(text)
+
+
+def parse_crossref_date(item: dict) -> datetime:
+    for key in ("published-online", "published-print", "published", "created", "indexed"):
+        value = item.get(key) or {}
+        date_parts = value.get("date-parts") or []
+        if not date_parts or not date_parts[0]:
+            continue
+        parts = list(date_parts[0])
+        year = int(parts[0])
+        month = int(parts[1]) if len(parts) > 1 else 1
+        day = int(parts[2]) if len(parts) > 2 else 1
+        return datetime(year, month, day, tzinfo=timezone.utc)
+    return datetime.now(timezone.utc)
+
+
+def crossref_author_names(item: dict) -> list[str]:
+    authors = []
+    for author in item.get("author", [])[:10]:
+        given = compact_whitespace(author.get("given", ""))
+        family = compact_whitespace(author.get("family", ""))
+        name = compact_whitespace(f"{given} {family}")
+        if name:
+            authors.append(name)
+    return authors
+
+
 def init_db(path: Path) -> sqlite3.Connection:
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
@@ -173,10 +227,18 @@ def ensure_paper_watch_columns(conn: sqlite3.Connection) -> None:
         "rag_source": "TEXT",
         "rag_page_start": "INTEGER",
         "rag_page_end": "INTEGER",
+        "doi": "TEXT",
+        "dedupe_key": "TEXT",
     }
     for name, column_type in columns.items():
         if name not in existing:
             conn.execute(f"ALTER TABLE paper_watch_items ADD COLUMN {name} {column_type}")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_paper_watch_dedupe_posted
+        ON paper_watch_items(dedupe_key, posted_at)
+        """
+    )
 
 
 def profile_terms() -> dict[str, float]:
@@ -207,6 +269,25 @@ def arxiv_query(terms: dict[str, float]) -> str:
 
     core_terms = sorted(terms, key=terms.get, reverse=True)[:18]
     return " OR ".join(f'all:"{term}"' for term in core_terms)
+
+
+def paper_watch_sources() -> set[str]:
+    raw = os.environ.get("PAPER_WATCH_SOURCES", "arxiv,crossref")
+    return {source.strip().lower() for source in raw.split(",") if source.strip()}
+
+
+def crossref_queries(terms: dict[str, float]) -> list[str]:
+    configured = os.environ.get("PAPER_WATCH_CROSSREF_QUERIES", "").strip()
+    if configured:
+        queries = [compact_whitespace(query) for query in configured.split(";")]
+    else:
+        queries = [
+            "persistent spin helix Rashba Dresselhaus spin-orbit semiconductor",
+            "time-resolved Kerr spin diffusion exciton spin magnon van der Waals magnet",
+        ]
+
+    max_queries = max(0, env_int("PAPER_WATCH_CROSSREF_MAX_QUERIES", 2))
+    return [query for query in queries if query][:max_queries]
 
 
 def profile_label(terms: dict[str, float], limit: int = 10) -> str:
@@ -250,6 +331,99 @@ def fetch_arxiv_entries(query: str, max_results: int) -> list[dict]:
     return entries
 
 
+def crossref_user_agent() -> str:
+    email = os.environ.get("PAPER_WATCH_CONTACT_EMAIL", "").strip()
+    if email:
+        return f"kohdalab-paperbot/0.1 (mailto:{email})"
+    return "kohdalab-paperbot/0.1"
+
+
+def crossref_url(query: str, *, rows: int, lookback_days: int) -> str:
+    since = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    params = {
+        "query.bibliographic": query,
+        "filter": f"from-created-date:{since},type:journal-article",
+        "sort": "created",
+        "order": "desc",
+        "rows": rows,
+    }
+    email = os.environ.get("PAPER_WATCH_CONTACT_EMAIL", "").strip()
+    if email:
+        params["mailto"] = email
+    return f"{CROSSREF_API_URL}?{urllib.parse.urlencode(params)}"
+
+
+def normalize_crossref_item(item: dict) -> dict | None:
+    title = compact_whitespace(" ".join(item.get("title") or []))
+    if not title:
+        return None
+
+    doi = normalize_doi(item.get("DOI", ""))
+    external_id = doi or normalize_title_for_dedupe(title)
+    if not external_id:
+        return None
+
+    published_at = parse_crossref_date(item)
+    updated_at = parse_datetime(item.get("indexed", {}).get("date-time", "")) if item.get("indexed", {}).get("date-time") else published_at
+    abstract = strip_markup(item.get("abstract", ""))
+    journal = compact_whitespace(" ".join(item.get("container-title") or []))
+    summary_parts = [abstract]
+    if journal:
+        summary_parts.append(f"Journal: {journal}.")
+    if doi:
+        summary_parts.append(f"DOI: {doi}.")
+    summary = compact_whitespace(" ".join(part for part in summary_parts if part))
+    if not summary:
+        summary = title
+
+    url = item.get("URL") or (f"https://doi.org/{doi}" if doi else "")
+    return {
+        "source": "crossref",
+        "external_id": external_id,
+        "doi": doi,
+        "dedupe_key": f"doi:{doi}" if doi else f"title:{normalize_title_for_dedupe(title)}",
+        "title": title,
+        "authors": crossref_author_names(item),
+        "summary": summary,
+        "url": url,
+        "published_at": published_at,
+        "updated_at": updated_at,
+    }
+
+
+def fetch_crossref_entries(queries: list[str], *, rows: int, lookback_days: int) -> list[dict]:
+    if not queries or rows <= 0:
+        return []
+
+    entries = []
+    sleep_seconds = max(0.0, env_float("PAPER_WATCH_CROSSREF_SLEEP_SECONDS", 1.0))
+    for index, query in enumerate(queries):
+        if index > 0 and sleep_seconds:
+            time.sleep(sleep_seconds)
+
+        url = crossref_url(query, rows=rows, lookback_days=lookback_days)
+        req = urllib.request.Request(url, headers={"User-Agent": crossref_user_agent()})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as res:
+                payload = json.loads(res.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 or 400 <= exc.code < 500:
+                print(f"Crossref fetch stopped after HTTP {exc.code}; backing off.", file=sys.stderr)
+                break
+            print(f"Crossref fetch failed with HTTP {exc.code}; skipping query.", file=sys.stderr)
+            continue
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            print(f"Crossref fetch failed; skipping query: {exc}", file=sys.stderr)
+            continue
+
+        items = payload.get("message", {}).get("items", [])
+        for item in items:
+            entry = normalize_crossref_item(item)
+            if entry:
+                entries.append(entry)
+    return entries
+
+
 def score_entry(entry: dict, terms: dict[str, float]) -> tuple[float, list[str]]:
     text = f"{entry['title']} {entry['summary']}".lower()
     score = 0.0
@@ -259,6 +433,34 @@ def score_entry(entry: dict, terms: dict[str, float]) -> tuple[float, list[str]]
             score += weight
             reasons.append(term)
     return score, reasons[:8]
+
+
+def ensure_entry_identity(entry: dict) -> None:
+    entry["doi"] = normalize_doi(entry.get("doi", ""))
+    entry["dedupe_key"] = entry.get("dedupe_key") or entry_dedupe_key(entry)
+
+
+def dedupe_entries(entries: list[dict]) -> list[dict]:
+    by_key: dict[str, dict] = {}
+    for entry in entries:
+        ensure_entry_identity(entry)
+        key = entry["dedupe_key"]
+        existing = by_key.get(key)
+        if not existing:
+            by_key[key] = entry
+            continue
+
+        entry_has_doi = bool(entry.get("doi"))
+        existing_has_doi = bool(existing.get("doi"))
+        entry_summary_len = len(entry.get("summary", ""))
+        existing_summary_len = len(existing.get("summary", ""))
+        if entry_has_doi and not existing_has_doi:
+            by_key[key] = entry
+        elif entry_summary_len > existing_summary_len:
+            by_key[key] = entry
+        elif entry_summary_len == existing_summary_len and entry["published_at"] > existing["published_at"]:
+            by_key[key] = entry
+    return list(by_key.values())
 
 
 def paper_watch_embed_model() -> str:
@@ -485,8 +687,9 @@ def upsert_entry(conn: sqlite3.Connection, entry: dict) -> bool:
             source, external_id, title, authors_json, summary, url,
             published_at, updated_at, score, reasons_json,
             term_score, rag_score, rag_source, rag_page_start, rag_page_end,
+            doi, dedupe_key,
             first_seen_at, last_seen_at, posted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
         ON CONFLICT(source, external_id) DO UPDATE SET
             title = excluded.title,
             authors_json = excluded.authors_json,
@@ -501,6 +704,8 @@ def upsert_entry(conn: sqlite3.Connection, entry: dict) -> bool:
             rag_source = excluded.rag_source,
             rag_page_start = excluded.rag_page_start,
             rag_page_end = excluded.rag_page_end,
+            doi = excluded.doi,
+            dedupe_key = excluded.dedupe_key,
             last_seen_at = excluded.last_seen_at
         """,
         (
@@ -519,6 +724,8 @@ def upsert_entry(conn: sqlite3.Connection, entry: dict) -> bool:
             entry.get("rag_source") or None,
             entry.get("rag_page_start"),
             entry.get("rag_page_end"),
+            entry.get("doi") or None,
+            entry.get("dedupe_key") or entry_dedupe_key(entry),
             now,
             now,
         ),
@@ -532,10 +739,18 @@ def select_candidates(conn: sqlite3.Connection, min_score: float, limit: int) ->
         """
         SELECT source, external_id, title, authors_json, summary, url,
                published_at, score, reasons_json,
-               term_score, rag_score, rag_source, rag_page_start, rag_page_end
-        FROM paper_watch_items
-        WHERE posted_at IS NULL
-          AND score >= ?
+               term_score, rag_score, rag_source, rag_page_start, rag_page_end,
+               doi, dedupe_key
+        FROM paper_watch_items AS candidate
+        WHERE candidate.posted_at IS NULL
+          AND candidate.score >= ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM paper_watch_items AS posted
+              WHERE posted.posted_at IS NOT NULL
+                AND posted.dedupe_key IS NOT NULL
+                AND posted.dedupe_key = candidate.dedupe_key
+          )
         ORDER BY score DESC, published_at DESC
         LIMIT ?
         """,
@@ -564,6 +779,8 @@ def select_candidates(conn: sqlite3.Connection, min_score: float, limit: int) ->
                 ) if rag_source else "",
                 "rag_page_start": row[12],
                 "rag_page_end": row[13],
+                "doi": row[14] or "",
+                "dedupe_key": row[15] or "",
             }
         )
     return items
@@ -811,6 +1028,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--post-limit", type=int, default=env_int("PAPER_WATCH_POST_LIMIT", 5))
     parser.add_argument("--min-score", type=float, default=env_float("PAPER_WATCH_MIN_SCORE", 6.0))
     parser.add_argument("--lookback-days", type=int, default=env_int("PAPER_WATCH_LOOKBACK_DAYS", 14))
+    parser.add_argument("--sources", default="", help="Comma-separated sources, e.g. arxiv,crossref.")
     parser.add_argument("--no-summary", action="store_true", help="Skip LLM-generated bilingual intros.")
     parser.add_argument("--include-abstract", action="store_true", help="Include abstracts in Slack output.")
     parser.add_argument("--verbose-message", action="store_true", help="Include profile and score details in Slack output.")
@@ -825,11 +1043,34 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     terms = profile_terms()
-    query = arxiv_query(terms)
+    sources = (
+        {source.strip().lower() for source in args.sources.split(",") if source.strip()}
+        if args.sources
+        else paper_watch_sources()
+    )
     cutoff = datetime.now(timezone.utc) - timedelta(days=args.lookback_days)
 
     entries = []
-    for entry in fetch_arxiv_entries(query, args.max_results):
+    if "arxiv" in sources:
+        query = arxiv_query(terms)
+        try:
+            entries.extend(fetch_arxiv_entries(query, args.max_results))
+        except (urllib.error.URLError, TimeoutError, OSError, ET.ParseError) as exc:
+            print(f"arXiv fetch failed; continuing with other sources: {exc}", file=sys.stderr)
+
+    if "crossref" in sources:
+        rows = env_int("PAPER_WATCH_CROSSREF_ROWS", 10)
+        entries.extend(
+            fetch_crossref_entries(
+                crossref_queries(terms),
+                rows=rows,
+                lookback_days=args.lookback_days,
+            )
+        )
+
+    entries = dedupe_entries(entries)
+    filtered_entries = []
+    for entry in entries:
         if entry["published_at"] < cutoff:
             continue
         term_score, reasons = score_entry(entry, terms)
@@ -841,7 +1082,8 @@ def main() -> None:
         entry["rag_page_start"] = None
         entry["rag_page_end"] = None
         entry["reasons"] = reasons
-        entries.append(entry)
+        filtered_entries.append(entry)
+    entries = filtered_entries
 
     conn = init_db(INDEX_DB_PATH)
     try:
