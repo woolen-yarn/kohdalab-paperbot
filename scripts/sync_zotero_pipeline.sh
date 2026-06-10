@@ -8,11 +8,7 @@ ZOTERO_ARGS="${ZOTERO_ARGS:---download-pdfs}"
 INGEST_ARGS="${INGEST_ARGS:---source-prefix zotero/}"
 RUN_FLAGS="--rm"
 RUN_FLAGS_T="--rm -T"
-
-if [ "${COMPOSE_RUN_BUILD:-1}" = "1" ]; then
-  RUN_FLAGS="--build $RUN_FLAGS"
-  RUN_FLAGS_T="--build $RUN_FLAGS_T"
-fi
+BUILT_RUNTIME_IMAGE=0
 
 if [ "${REBUILD:-0}" = "1" ]; then
   INGEST_ARGS="--rebuild --source-prefix zotero/"
@@ -22,11 +18,22 @@ compose() {
   docker compose -f "$COMPOSE_FILE" "$@"
 }
 
+build_runtime_image() {
+  if [ "${COMPOSE_RUN_BUILD:-1}" != "1" ] || [ "$BUILT_RUNTIME_IMAGE" = "1" ]; then
+    return 0
+  fi
+  step "Build runtime image"
+  compose build --quiet paperbot
+  BUILT_RUNTIME_IMAGE=1
+}
+
 compose_run() {
+  build_runtime_image
   compose run $RUN_FLAGS "$@"
 }
 
 compose_run_t() {
+  build_runtime_image
   compose run $RUN_FLAGS_T "$@"
 }
 
