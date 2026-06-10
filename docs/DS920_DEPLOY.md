@@ -81,10 +81,19 @@ PAPER_WATCH_POST_LIMIT=5
 PAPER_WATCH_MIN_SCORE=6
 PAPER_WATCH_BILINGUAL_INTRO=true
 PAPER_WATCH_SUMMARY_MODEL=gpt-oss:20b
+PAPER_WATCH_USE_RAG_SCORE=true
+PAPER_WATCH_EMBED_MODEL=nomic-embed-text
+PAPER_WATCH_RAG_WEIGHT=8
+PAPER_WATCH_RAG_CANDIDATE_LIMIT=30
+PAPER_WATCH_RAG_MAX_CHUNKS=1200
+PAPER_WATCH_RAG_CHUNKS_PER_SOURCE=2
+PAPER_WATCH_RAG_MIN_TERM_SCORE=1
 ```
 
 `channel_not_found` になる場合は、`#paper` ではなくチャンネルIDを指定してください。
-Paper Watch v1はRAG類似度ではなく、研究室プロファイル語のterm scoreで候補を選びます。
+Paper Watchは研究室プロファイル語の `term_score` に加えて、候補abstractをembeddingし、
+既存PDF RAG indexとの類似度 `rag_score` も使います。最終スコアは
+`term_score + rag_score * PAPER_WATCH_RAG_WEIGHT` です。
 投稿文の紹介はOllamaで日英併記生成します。
 
 PDF:
