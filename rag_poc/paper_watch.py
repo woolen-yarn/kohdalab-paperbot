@@ -1670,27 +1670,6 @@ def build_messages(
     ]
 
 
-def build_message(
-    items: list[dict],
-    *,
-    terms: dict[str, float] | None = None,
-    include_intro: bool = True,
-    use_rag_score: bool = False,
-    include_abstract: bool = False,
-    verbose: bool = False,
-) -> str:
-    del terms
-    return "\n\n---\n\n".join(
-        build_messages(
-            items,
-            include_intro=include_intro,
-            use_rag_score=use_rag_score,
-            include_abstract=include_abstract,
-            verbose=verbose,
-        )
-    )
-
-
 def post_to_slack(text: str) -> bool:
     token = os.environ.get("SLACK_BOT_TOKEN", "").strip()
     channel = os.environ.get("PAPER_WATCH_CHANNEL", "").strip()
@@ -1704,6 +1683,30 @@ def post_to_slack(text: str) -> bool:
         print(f"Paper Watch Slack post failed: {error}", file=sys.stderr)
         return False
     return True
+
+
+def post_candidate_messages(
+    conn: sqlite3.Connection,
+    candidates: list[dict],
+    messages: list[str],
+) -> int:
+    if len(candidates) != len(messages):
+        raise RuntimeError(
+            f"Paper Watch message count mismatch: papers={len(candidates)} messages={len(messages)}"
+        )
+
+    posted = 0
+    for index, (item, message) in enumerate(zip(candidates, messages), start=1):
+        print(
+            "Paper Watch Slack post "
+            f"{index}/{len(candidates)}: {truncate(item['title'], 90)}"
+        )
+        if not post_to_slack(message):
+            break
+        mark_posted(conn, [item])
+        conn.commit()
+        posted += 1
+    return posted
 
 
 def parse_args() -> argparse.Namespace:
@@ -1819,11 +1822,11 @@ def main() -> None:
             )
             print("\n\n---\n\n".join(messages))
             if not args.dry_run:
-                for item, message in zip(candidates, messages):
-                    if not post_to_slack(message):
-                        break
-                    mark_posted(conn, [item])
-                    conn.commit()
+                posted = post_candidate_messages(conn, candidates, messages)
+                print(
+                    "Paper Watch Slack posts complete: "
+                    f"posted={posted} messages for {len(candidates)} papers"
+                )
         elif args.notify_empty:
             message = "Paper Watch / 新着論文紹介: no new matching papers found."
             print(message)

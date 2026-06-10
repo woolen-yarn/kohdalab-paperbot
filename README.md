@@ -203,7 +203,9 @@ Useful bot commands:
 
 Paper Watch fetches candidates, deduplicates them by DOI or normalized title,
 scores them with the lab profile and RAG similarity, and posts compact Slack
-messages one paper at a time.
+messages one paper at a time. Each selected paper is sent with a separate
+`chat.postMessage` call; a five-paper run produces five Slack messages, not one
+combined digest.
 
 Scoring inputs:
 
@@ -288,6 +290,11 @@ cd /volume1/docker/paperbot
 sudo git pull origin master
 sudo docker compose -f docker-compose.nas.yml up -d --build paperbot
 ```
+
+All Compose services share the `kohdalab-paperbot:local` image. The scheduled
+scripts also run Compose with `--build` by default, so `paper-watch`, `zotero`,
+and `ingest` do not silently keep using an old image after a Git pull. Set
+`COMPOSE_RUN_BUILD=0` only if you intentionally want to skip that check.
 
 Follow logs:
 
