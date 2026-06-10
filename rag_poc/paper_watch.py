@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 import re
 import sqlite3
@@ -15,9 +16,9 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 try:
-    from .ollama_client import OllamaError, generate
+    from .ollama_client import OllamaError, embed, generate
 except ImportError:
-    from ollama_client import OllamaError, generate
+    from ollama_client import OllamaError, embed, generate
 
 
 ROOT = Path(__file__).resolve().parent
@@ -149,6 +150,7 @@ def init_db(path: Path) -> sqlite3.Connection:
         )
         """
     )
+    ensure_paper_watch_columns(conn)
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_paper_watch_posted_score
@@ -156,6 +158,23 @@ def init_db(path: Path) -> sqlite3.Connection:
         """
     )
     return conn
+
+
+def ensure_paper_watch_columns(conn: sqlite3.Connection) -> None:
+    existing = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(paper_watch_items)").fetchall()
+    }
+    columns = {
+        "term_score": "REAL NOT NULL DEFAULT 0",
+        "rag_score": "REAL NOT NULL DEFAULT 0",
+        "rag_source": "TEXT",
+        "rag_page_start": "INTEGER",
+        "rag_page_end": "INTEGER",
+    }
+    for name, column_type in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE paper_watch_items ADD COLUMN {name} {column_type}")
 
 
 def profile_terms() -> dict[str, float]:
@@ -240,6 +259,214 @@ def score_entry(entry: dict, terms: dict[str, float]) -> tuple[float, list[str]]
     return score, reasons[:8]
 
 
+def paper_watch_embed_model() -> str:
+    return os.environ.get(
+        "PAPER_WATCH_EMBED_MODEL",
+        os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
+    )
+
+
+def cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def parse_authors(authors_json: str) -> list[str]:
+    try:
+        authors = json.loads(authors_json or "[]")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(authors, list):
+        return []
+    return [str(author) for author in authors if author]
+
+
+def compact_lab_authors(authors: list[str]) -> str:
+    if not authors:
+        return ""
+    if len(authors) == 1:
+        return authors[0]
+    return f"{authors[0]} et al."
+
+
+def load_metadata_by_source(conn: sqlite3.Connection) -> dict[str, dict]:
+    try:
+        rows = conn.execute(
+            """
+            SELECT pdf_path, title, authors_json, year, journal
+            FROM papers
+            WHERE pdf_path IS NOT NULL
+              AND pdf_path != ''
+              AND COALESCE(is_duplicate, 0) = 0
+            """
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+
+    metadata = {}
+    for pdf_path, title, authors_json, year, journal in rows:
+        metadata[pdf_path] = {
+            "title": title or "",
+            "authors": parse_authors(authors_json),
+            "year": year or "",
+            "journal": journal or "",
+        }
+    return metadata
+
+
+def format_rag_source_label(source: str, metadata: dict | None = None) -> str:
+    metadata = metadata or {}
+    title = metadata.get("title", "")
+    if not title:
+        return source
+
+    parts = [title]
+    year = metadata.get("year", "")
+    authors = compact_lab_authors(metadata.get("authors", []))
+    journal = metadata.get("journal", "")
+    if year:
+        parts.append(f"({year})")
+    if authors:
+        parts.append(f"- {authors}")
+    if journal:
+        parts.append(f"- {journal}")
+    return " ".join(parts)
+
+
+def load_rag_reference_chunks(
+    conn: sqlite3.Connection,
+    *,
+    max_chunks: int,
+    chunks_per_source: int,
+) -> list[dict]:
+    if max_chunks <= 0 or chunks_per_source <= 0:
+        return []
+
+    metadata_by_source = load_metadata_by_source(conn)
+    try:
+        rows = conn.execute(
+            """
+            SELECT source, page_start, page_end, text, embedding_json
+            FROM chunks
+            ORDER BY source, page_start, page_end, rowid
+            """
+        )
+    except sqlite3.OperationalError:
+        return []
+
+    chunks = []
+    counts_by_source: dict[str, int] = {}
+    for source, page_start, page_end, text, embedding_json in rows:
+        if counts_by_source.get(source, 0) >= chunks_per_source:
+            continue
+        try:
+            vector = json.loads(embedding_json)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(vector, list) or not vector:
+            continue
+
+        counts_by_source[source] = counts_by_source.get(source, 0) + 1
+        metadata = metadata_by_source.get(source, {})
+        chunks.append(
+            {
+                "source": source,
+                "source_label": format_rag_source_label(source, metadata),
+                "page_start": page_start,
+                "page_end": page_end,
+                "text": text,
+                "embedding": vector,
+            }
+        )
+        if len(chunks) >= max_chunks:
+            break
+    return chunks
+
+
+def candidate_embedding_text(entry: dict) -> str:
+    return "\n\n".join(
+        [
+            entry.get("title", ""),
+            compact_authors(entry.get("authors", [])),
+            entry.get("summary", ""),
+        ]
+    ).strip()
+
+
+def best_rag_match(query_vector: list[float], chunks: list[dict]) -> tuple[float, dict | None]:
+    best_score = -1.0
+    best_chunk = None
+    for chunk in chunks:
+        score = cosine(query_vector, chunk["embedding"])
+        if score > best_score:
+            best_score = score
+            best_chunk = chunk
+    return max(0.0, best_score), best_chunk
+
+
+def apply_rag_scores(
+    entries: list[dict],
+    conn: sqlite3.Connection,
+    *,
+    enabled: bool,
+) -> None:
+    for entry in entries:
+        entry.setdefault("term_score", entry.get("score", 0.0))
+        entry.setdefault("rag_score", 0.0)
+        entry.setdefault("rag_source", "")
+        entry.setdefault("rag_source_label", "")
+        entry.setdefault("rag_page_start", None)
+        entry.setdefault("rag_page_end", None)
+
+    if not enabled:
+        return
+
+    reference_chunks = load_rag_reference_chunks(
+        conn,
+        max_chunks=env_int("PAPER_WATCH_RAG_MAX_CHUNKS", 1200),
+        chunks_per_source=env_int("PAPER_WATCH_RAG_CHUNKS_PER_SOURCE", 2),
+    )
+    if not reference_chunks:
+        print("Paper Watch RAG score skipped: no indexed PDF chunks found.")
+        return
+
+    candidate_limit = env_int("PAPER_WATCH_RAG_CANDIDATE_LIMIT", 30)
+    min_term_score = env_float("PAPER_WATCH_RAG_MIN_TERM_SCORE", 1.0)
+    rag_weight = env_float("PAPER_WATCH_RAG_WEIGHT", 8.0)
+    model = paper_watch_embed_model()
+
+    eligible_entries = [
+        entry for entry in entries if entry.get("term_score", 0.0) >= min_term_score
+    ]
+    eligible_entries.sort(
+        key=lambda item: (item.get("term_score", 0.0), item["published_at"]),
+        reverse=True,
+    )
+
+    for entry in eligible_entries[:candidate_limit]:
+        try:
+            query_vector = embed(candidate_embedding_text(entry), model, timeout=180)
+        except OllamaError as exc:
+            print(
+                f"Paper Watch RAG score failed for {entry['external_id']}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+
+        rag_score, nearest = best_rag_match(query_vector, reference_chunks)
+        entry["rag_score"] = rag_score
+        entry["score"] = entry["term_score"] + (rag_score * rag_weight)
+        if nearest:
+            entry["rag_source"] = nearest["source"]
+            entry["rag_source_label"] = nearest["source_label"]
+            entry["rag_page_start"] = nearest["page_start"]
+            entry["rag_page_end"] = nearest["page_end"]
+
+
 def upsert_entry(conn: sqlite3.Connection, entry: dict) -> bool:
     now = utc_now()
     existing = conn.execute(
@@ -255,8 +482,9 @@ def upsert_entry(conn: sqlite3.Connection, entry: dict) -> bool:
         INSERT INTO paper_watch_items (
             source, external_id, title, authors_json, summary, url,
             published_at, updated_at, score, reasons_json,
+            term_score, rag_score, rag_source, rag_page_start, rag_page_end,
             first_seen_at, last_seen_at, posted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
         ON CONFLICT(source, external_id) DO UPDATE SET
             title = excluded.title,
             authors_json = excluded.authors_json,
@@ -266,6 +494,11 @@ def upsert_entry(conn: sqlite3.Connection, entry: dict) -> bool:
             updated_at = excluded.updated_at,
             score = excluded.score,
             reasons_json = excluded.reasons_json,
+            term_score = excluded.term_score,
+            rag_score = excluded.rag_score,
+            rag_source = excluded.rag_source,
+            rag_page_start = excluded.rag_page_start,
+            rag_page_end = excluded.rag_page_end,
             last_seen_at = excluded.last_seen_at
         """,
         (
@@ -279,6 +512,11 @@ def upsert_entry(conn: sqlite3.Connection, entry: dict) -> bool:
             entry["updated_at"].strftime("%Y-%m-%dT%H:%M:%SZ"),
             entry["score"],
             json.dumps(entry["reasons"], ensure_ascii=False),
+            entry.get("term_score", entry["score"]),
+            entry.get("rag_score", 0.0),
+            entry.get("rag_source") or None,
+            entry.get("rag_page_start"),
+            entry.get("rag_page_end"),
             now,
             now,
         ),
@@ -287,10 +525,12 @@ def upsert_entry(conn: sqlite3.Connection, entry: dict) -> bool:
 
 
 def select_candidates(conn: sqlite3.Connection, min_score: float, limit: int) -> list[dict]:
+    metadata_by_source = load_metadata_by_source(conn)
     rows = conn.execute(
         """
         SELECT source, external_id, title, authors_json, summary, url,
-               published_at, score, reasons_json
+               published_at, score, reasons_json,
+               term_score, rag_score, rag_source, rag_page_start, rag_page_end
         FROM paper_watch_items
         WHERE posted_at IS NULL
           AND score >= ?
@@ -301,6 +541,7 @@ def select_candidates(conn: sqlite3.Connection, min_score: float, limit: int) ->
     ).fetchall()
     items = []
     for row in rows:
+        rag_source = row[11] or ""
         items.append(
             {
                 "source": row[0],
@@ -312,6 +553,15 @@ def select_candidates(conn: sqlite3.Connection, min_score: float, limit: int) ->
                 "published_at": row[6],
                 "score": row[7],
                 "reasons": json.loads(row[8]),
+                "term_score": row[9],
+                "rag_score": row[10],
+                "rag_source": rag_source,
+                "rag_source_label": format_rag_source_label(
+                    rag_source,
+                    metadata_by_source.get(rag_source, {}),
+                ) if rag_source else "",
+                "rag_page_start": row[12],
+                "rag_page_end": row[13],
             }
         )
     return items
@@ -365,16 +615,25 @@ def fallback_intro(item: dict, *, reason: str = "failed") -> str:
 
 def build_intro_prompt(item: dict) -> str:
     reasons = ", ".join(item["reasons"]) if item["reasons"] else "profile match"
+    rag_hint = "not used"
+    if item.get("rag_score", 0) > 0 and item.get("rag_source_label"):
+        page = item.get("rag_page_start") or "?"
+        rag_hint = (
+            f"nearest indexed lab PDF similarity={item['rag_score']:.3f}; "
+            f"nearest PDF={item['rag_source_label']} p.{page}"
+        )
     return f"""You are KohdaLab's Paper Watch assistant.
 Based only on the title and abstract below, write a bilingual paper introduction.
 Do not invent results, numbers, materials, or methods that are not in the abstract.
 Keep technical terms such as Rashba, Dresselhaus, spin-orbit, exciton, magnon, TRKR, PSH, and 2DEG in English.
+Use the relevance hints only to judge likely lab relevance; do not claim findings from the nearest lab PDF unless they also appear in the abstract.
 
 Format exactly:
 EN: one concise English sentence explaining why this may be relevant to the lab.
 JA: one concise Japanese sentence explaining why this may be relevant to the lab.
 
 Profile match terms: {reasons}
+RAG relevance hint: {rag_hint}
 
 Title:
 {item['title']}
@@ -401,24 +660,44 @@ def build_message(
     *,
     terms: dict[str, float] | None = None,
     include_intro: bool = True,
+    use_rag_score: bool = False,
 ) -> str:
     lines = ["*Paper Watch / 新着論文紹介*"]
     if terms:
         lines.append(f"profile=`{profile_label(terms)}`")
-        lines.append("scoring=`profile term match`; RAG relevance is not used yet.")
+        if use_rag_score:
+            weight = env_float("PAPER_WATCH_RAG_WEIGHT", 8.0)
+            lines.append(f"scoring=`term score + RAG similarity x {weight:g}`")
+        else:
+            lines.append("scoring=`profile term match`")
     for index, item in enumerate(items, start=1):
         reasons = ", ".join(item["reasons"]) if item["reasons"] else "profile match"
+        score_parts = [
+            f"`{item['source']}:{item['external_id']}`",
+            f"score=`{item['score']:.1f}`",
+            f"term=`{item.get('term_score', item['score']):.1f}`",
+        ]
+        if use_rag_score:
+            score_parts.append(f"rag=`{item.get('rag_score', 0.0):.3f}`")
+        score_parts.append(f"reasons=`{reasons}`")
         lines.extend(
             [
                 "",
                 f"*{index}. {item['title']}*",
                 f"{compact_authors(item['authors'])}",
-                f"`{item['source']}:{item['external_id']}` score=`{item['score']:.1f}` reasons=`{reasons}`",
+                " ".join(score_parts),
                 bilingual_intro(item, enabled=include_intro),
                 item["url"],
                 f"Abstract: {truncate(item['summary'], 360)}",
             ]
         )
+        if use_rag_score and item.get("rag_source_label"):
+            page_start = item.get("rag_page_start") or "?"
+            page_end = item.get("rag_page_end") or page_start
+            lines.append(
+                "Nearest lab PDF / 近い研究室PDF: "
+                f"{truncate(item['rag_source_label'], 180)} pp.{page_start}-{page_end}"
+            )
     return "\n".join(lines)
 
 
@@ -446,6 +725,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-score", type=float, default=env_float("PAPER_WATCH_MIN_SCORE", 6.0))
     parser.add_argument("--lookback-days", type=int, default=env_int("PAPER_WATCH_LOOKBACK_DAYS", 14))
     parser.add_argument("--no-summary", action="store_true", help="Skip LLM-generated bilingual intros.")
+    parser.add_argument(
+        "--no-rag-score",
+        action="store_true",
+        help="Disable abstract-to-RAG-index similarity scoring.",
+    )
     return parser.parse_args()
 
 
@@ -459,13 +743,21 @@ def main() -> None:
     for entry in fetch_arxiv_entries(query, args.max_results):
         if entry["published_at"] < cutoff:
             continue
-        score, reasons = score_entry(entry, terms)
-        entry["score"] = score
+        term_score, reasons = score_entry(entry, terms)
+        entry["term_score"] = term_score
+        entry["score"] = term_score
+        entry["rag_score"] = 0.0
+        entry["rag_source"] = ""
+        entry["rag_source_label"] = ""
+        entry["rag_page_start"] = None
+        entry["rag_page_end"] = None
         entry["reasons"] = reasons
         entries.append(entry)
 
     conn = init_db(INDEX_DB_PATH)
     try:
+        use_rag_score = env_bool("PAPER_WATCH_USE_RAG_SCORE", True) and not args.no_rag_score
+        apply_rag_scores(entries, conn, enabled=use_rag_score)
         new_count = 0
         for entry in entries:
             if upsert_entry(conn, entry):
@@ -473,7 +765,12 @@ def main() -> None:
         candidates = select_candidates(conn, args.min_score, args.post_limit)
         if candidates:
             include_intro = env_bool("PAPER_WATCH_BILINGUAL_INTRO", True) and not args.no_summary
-            message = build_message(candidates, terms=terms, include_intro=include_intro)
+            message = build_message(
+                candidates,
+                terms=terms,
+                include_intro=include_intro,
+                use_rag_score=use_rag_score,
+            )
             print(message)
             if not args.dry_run and post_to_slack(message):
                 mark_posted(conn, candidates)
