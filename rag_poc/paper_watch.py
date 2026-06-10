@@ -14,6 +14,11 @@ from pathlib import Path
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
+try:
+    from .ollama_client import OllamaError, generate
+except ImportError:
+    from ollama_client import OllamaError, generate
+
 
 ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = ROOT.parent
@@ -96,6 +101,13 @@ def env_float(name: str, default: float) -> float:
         return default
 
 
+def env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "on"}
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -174,6 +186,10 @@ def arxiv_query(terms: dict[str, float]) -> str:
 
     core_terms = sorted(terms, key=terms.get, reverse=True)[:18]
     return " OR ".join(f'all:"{term}"' for term in core_terms)
+
+
+def profile_label(terms: dict[str, float], limit: int = 10) -> str:
+    return ", ".join(sorted(terms, key=terms.get, reverse=True)[:limit])
 
 
 def fetch_arxiv_entries(query: str, max_results: int) -> list[dict]:
@@ -327,8 +343,69 @@ def truncate(text: str, limit: int) -> str:
     return text[: limit - 1].rstrip() + "..."
 
 
-def build_message(items: list[dict]) -> str:
+def summary_model() -> str:
+    return os.environ.get(
+        "PAPER_WATCH_SUMMARY_MODEL",
+        os.environ.get("OLLAMA_CHAT_MODEL", "gpt-oss:20b"),
+    )
+
+
+def fallback_intro(item: dict, *, reason: str = "failed") -> str:
+    if reason == "disabled":
+        ja_line = "JA: 日本語紹介文は無効化されています。Abstractを確認してください。"
+    else:
+        ja_line = "JA: 日本語紹介文はLLM生成に失敗したため省略しました。Abstractを確認してください。"
+    return "\n".join(
+        [
+            f"EN: {truncate(item['summary'], 260)}",
+            ja_line,
+        ]
+    )
+
+
+def build_intro_prompt(item: dict) -> str:
+    reasons = ", ".join(item["reasons"]) if item["reasons"] else "profile match"
+    return f"""You are KohdaLab's Paper Watch assistant.
+Based only on the title and abstract below, write a bilingual paper introduction.
+Do not invent results, numbers, materials, or methods that are not in the abstract.
+Keep technical terms such as Rashba, Dresselhaus, spin-orbit, exciton, magnon, TRKR, PSH, and 2DEG in English.
+
+Format exactly:
+EN: one concise English sentence explaining why this may be relevant to the lab.
+JA: one concise Japanese sentence explaining why this may be relevant to the lab.
+
+Profile match terms: {reasons}
+
+Title:
+{item['title']}
+
+Abstract:
+{item['summary']}
+"""
+
+
+def bilingual_intro(item: dict, *, enabled: bool) -> str:
+    if not enabled:
+        return fallback_intro(item, reason="disabled")
+    try:
+        text = generate(build_intro_prompt(item), summary_model(), timeout=180).strip()
+    except OllamaError:
+        return fallback_intro(item)
+    if "EN:" not in text or "JA:" not in text:
+        return fallback_intro(item)
+    return text
+
+
+def build_message(
+    items: list[dict],
+    *,
+    terms: dict[str, float] | None = None,
+    include_intro: bool = True,
+) -> str:
     lines = ["*Paper Watch / 新着論文紹介*"]
+    if terms:
+        lines.append(f"profile=`{profile_label(terms)}`")
+        lines.append("scoring=`profile term match`; RAG relevance is not used yet.")
     for index, item in enumerate(items, start=1):
         reasons = ", ".join(item["reasons"]) if item["reasons"] else "profile match"
         lines.extend(
@@ -337,8 +414,9 @@ def build_message(items: list[dict]) -> str:
                 f"*{index}. {item['title']}*",
                 f"{compact_authors(item['authors'])}",
                 f"`{item['source']}:{item['external_id']}` score=`{item['score']:.1f}` reasons=`{reasons}`",
+                bilingual_intro(item, enabled=include_intro),
                 item["url"],
-                truncate(item["summary"], 420),
+                f"Abstract: {truncate(item['summary'], 360)}",
             ]
         )
     return "\n".join(lines)
@@ -367,6 +445,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--post-limit", type=int, default=env_int("PAPER_WATCH_POST_LIMIT", 5))
     parser.add_argument("--min-score", type=float, default=env_float("PAPER_WATCH_MIN_SCORE", 6.0))
     parser.add_argument("--lookback-days", type=int, default=env_int("PAPER_WATCH_LOOKBACK_DAYS", 14))
+    parser.add_argument("--no-summary", action="store_true", help="Skip LLM-generated bilingual intros.")
     return parser.parse_args()
 
 
@@ -393,7 +472,8 @@ def main() -> None:
                 new_count += 1
         candidates = select_candidates(conn, args.min_score, args.post_limit)
         if candidates:
-            message = build_message(candidates)
+            include_intro = env_bool("PAPER_WATCH_BILINGUAL_INTRO", True) and not args.no_summary
+            message = build_message(candidates, terms=terms, include_intro=include_intro)
             print(message)
             if not args.dry_run and post_to_slack(message):
                 mark_posted(conn, candidates)

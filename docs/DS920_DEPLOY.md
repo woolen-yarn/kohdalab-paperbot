@@ -79,9 +79,13 @@ PAPER_WATCH_LOOKBACK_DAYS=14
 PAPER_WATCH_MAX_RESULTS=80
 PAPER_WATCH_POST_LIMIT=5
 PAPER_WATCH_MIN_SCORE=6
+PAPER_WATCH_BILINGUAL_INTRO=true
+PAPER_WATCH_SUMMARY_MODEL=gpt-oss:20b
 ```
 
 `channel_not_found` になる場合は、`#paper` ではなくチャンネルIDを指定してください。
+Paper Watch v1はRAG類似度ではなく、研究室プロファイル語のterm scoreで候補を選びます。
+投稿文の紹介はOllamaで日英併記生成します。
 
 PDF:
 
