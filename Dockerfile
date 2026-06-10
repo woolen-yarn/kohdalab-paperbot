@@ -14,5 +14,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY bot.py ask_ollama.py main.py README.md ./
 COPY rag_poc ./rag_poc
+COPY scripts ./scripts
 
 CMD ["python", "bot.py"]
