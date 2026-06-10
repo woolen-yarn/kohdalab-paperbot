@@ -122,8 +122,9 @@ feed間に1秒待ちます。RSS URLが変わった場合は `.env` の `PAPER_W
 AIP/APLのRSSは出版社側で403になることがあるため、RSS groupが空だった場合だけ
 ISSNで雑誌を絞った控えめなCrossref fallbackを使えます。fallback対象誌数は
 `PAPER_WATCH_RSS_CROSSREF_FALLBACK_MAX_JOURNALS` で上限をかけます。
-投稿文の英語紹介は `PAPER_WATCH_SUMMARY_MODEL`、日本語化は
-`PAPER_WATCH_TRANSLATION_MODEL` で行います。通常のSlack投稿は軽量表示で、
+投稿文の英語解説は `PAPER_WATCH_SUMMARY_MODEL` が
+`Material / Method / Physics / New` の4項目で作り、日本語化は
+`PAPER_WATCH_TRANSLATION_MODEL` で構造を保ったまま行います。通常のSlack投稿は軽量表示で、
 1論文ずつ個別メッセージに分け、タイトル、著者、雑誌/ソース、関連度ランク、
 match、日英紹介、短いリンク、近い研究室PDFをコンパクトに表示します。
 `PAPER_WATCH_VERBOSE_MESSAGE=true` でスコア詳細、`PAPER_WATCH_INCLUDE_ABSTRACT=true`

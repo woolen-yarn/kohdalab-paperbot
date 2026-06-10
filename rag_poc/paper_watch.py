@@ -1465,11 +1465,11 @@ def load_lab_profile_context() -> str:
 
 def fallback_intro(item: dict, *, reason: str = "failed") -> str:
     if reason == "disabled":
-        en_line = "EN: Bilingual introduction is disabled; please open the linked paper."
-        ja_line = "JA: 日英紹介文は無効化されています。リンク先の論文を確認してください。"
+        en_line = "EN: Bilingual technical note is disabled; please open the linked paper."
+        ja_line = "JA: 日英解説は無効化されています。リンク先の論文を確認してください。"
     else:
-        en_line = "EN: Bilingual introduction failed; please open the linked paper."
-        ja_line = "JA: 日英紹介文の生成に失敗しました。リンク先の論文を確認してください。"
+        en_line = "EN: Bilingual technical note failed; please open the linked paper."
+        ja_line = "JA: 日英解説の生成に失敗しました。リンク先の論文を確認してください。"
     return "\n".join(
         [
             en_line,
@@ -1498,13 +1498,22 @@ def build_english_intro_prompt(item: dict) -> str:
             f"nearest PDF={item['rag_source_label']} p.{page}"
         )
     return f"""You are KohdaLab's Paper Watch assistant.
-Based only on the title and abstract below, write an English paper introduction.
+Based only on the title and abstract below, write a compact technical note for researchers.
 Do not invent results, numbers, materials, or methods that are not in the abstract.
 Keep technical terms such as Rashba, Dresselhaus, spin-orbit, exciton, magnon, TRKR, PSH, and 2DEG in English.
 Use the relevance hints only to judge likely lab relevance; do not claim findings from the nearest lab PDF unless they also appear in the abstract.
 
-Output exactly one concise English sentence explaining why this may be relevant to the lab.
-Do not include a label such as "EN:".
+Output exactly four short fields on one line using this format:
+Material: ... | Method: ... | Physics: ... | New: ...
+
+Rules:
+- Material: name the material system, sample platform, or device structure. Use "not specified" if absent.
+- Method: name the experimental, computational, or analysis method. Use "not specified" if absent.
+- Physics: name the key physical mechanism or phenomenon.
+- New: state what appears new or notable, in cautious language.
+- Each field must be 3 to 12 words.
+- Do not include a label such as "EN:".
+- Do not use markdown bullets.
 
 Profile match terms: {reasons}
 RAG relevance hint: {rag_hint}
@@ -1520,11 +1529,14 @@ Abstract:
 
 
 def build_intro_translation_prompt(item: dict, english_intro: str) -> str:
-    return f"""Translate the English paper introduction into natural Japanese.
+    return f"""Translate the English structured paper note into natural Japanese.
 Do not add, remove, or change scientific claims.
 Preserve technical terms and proper nouns in English when appropriate.
 Keep Rashba, Dresselhaus, spin-orbit, exciton, magnon, TRKR, PSH, 2DEG, and material names as-is.
-Output exactly one Japanese sentence. Do not include a label such as "JA:".
+Keep the same four-field structure and output exactly one line:
+材料: ... | 手法: ... | 物理: ... | 新規性: ...
+Use "不明" for "not specified".
+Do not include a label such as "JA:".
 
 Title:
 {item['title']}
@@ -1564,7 +1576,7 @@ def bilingual_intro(item: dict, *, enabled: bool) -> str:
             japanese_intro = ""
 
     if not japanese_intro:
-        japanese_intro = "日本語紹介文の生成に失敗しました。リンク先の論文を確認してください。"
+        japanese_intro = "日本語解説の生成に失敗しました。リンク先の論文を確認してください。"
 
     return f"EN: {english_intro}\nJA: {japanese_intro}"
 
