@@ -141,6 +141,7 @@ PAPER_WATCH_RSS_MAX_ITEMS_PER_FEED=20
 PAPER_WATCH_RSS_SLEEP_SECONDS=1
 PAPER_WATCH_RSS_CROSSREF_FALLBACK=true
 PAPER_WATCH_RSS_CROSSREF_FALLBACK_ROWS=10
+PAPER_WATCH_RSS_CROSSREF_FALLBACK_MAX_JOURNALS=6
 PAPER_WATCH_POST_LIMIT=5
 PAPER_WATCH_MIN_SCORE=6
 PAPER_WATCH_BILINGUAL_INTRO=true
@@ -162,8 +163,12 @@ RSS sources are grouped so they can be scheduled separately:
 
 ```text
 pr      Physical Review Letters, Physical Review B, Physical Review Applied
+pr_ext  Physical Review X, Physical Review Research, Physical Review Materials, Reviews of Modern Physics
 nature  Nature Physics, Nature Communications, Communications Physics
+nature_ext  Nature Materials, Nature Nanotechnology, Nature Electronics, Nature Photonics
 aip     Applied Physics Letters
+nano_2d Nano Letters, ACS Nano, ACS Photonics, ACS Applied Materials & Interfaces, 2D Materials
+broad_high  Science Advances, Advanced Materials, Advanced Science
 ```
 
 RSS feeds are deliberately small and configurable. Override the built-in list
@@ -196,7 +201,8 @@ a polite `mailto` parameter and User-Agent. If Crossref returns `429` or another
 client-side 4XX response, Paper Watch stops Crossref fetching for that run. If
 an RSS feed returns `429` or a 4XX response, only that feed is skipped. AIP/APL
 RSS may be blocked by the publisher; when an RSS group has no entries, the
-optional fallback sends one conservative Crossref query for that journal group.
+optional fallback sends conservative ISSN-filtered Crossref queries for that
+journal group, capped by `PAPER_WATCH_RSS_CROSSREF_FALLBACK_MAX_JOURNALS`.
 
 The default profile includes topics such as Persistent Spin Helix, Rashba,
 Dresselhaus, spin diffusion, TRKR, semiconductor spintronics, 2D magnets,
@@ -256,15 +262,21 @@ Recommended DSM scheduled tasks:
 cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources arxiv
 
 # Monthly week 1: APS / Physical Review family
-cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups pr
+cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups pr,pr_ext
 
 # Monthly week 2: Nature family
-cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups nature
+cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups nature,nature_ext
 
 # Monthly week 3: AIP / Applied Physics Letters
 cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups aip
 
-# Optional monthly broad journal search through Crossref
+# Monthly week 4: nano / 2D materials journals
+cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups nano_2d
+
+# Optional monthly or bimonthly broad high-impact journals
+cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups broad_high
+
+# Optional monthly broad search through Crossref
 cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources crossref
 ```
 

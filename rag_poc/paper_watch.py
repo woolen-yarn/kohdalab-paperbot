@@ -57,6 +57,30 @@ DEFAULT_RSS_FEEDS = [
         "url": "https://feeds.aps.org/rss/recent/prapplied.xml",
     },
     {
+        "id": "aps_prx",
+        "group": "pr_ext",
+        "journal": "Physical Review X",
+        "url": "https://feeds.aps.org/rss/recent/prx.xml",
+    },
+    {
+        "id": "aps_prresearch",
+        "group": "pr_ext",
+        "journal": "Physical Review Research",
+        "url": "https://feeds.aps.org/rss/recent/prresearch.xml",
+    },
+    {
+        "id": "aps_prmaterials",
+        "group": "pr_ext",
+        "journal": "Physical Review Materials",
+        "url": "https://feeds.aps.org/rss/recent/prmaterials.xml",
+    },
+    {
+        "id": "aps_rmp",
+        "group": "pr_ext",
+        "journal": "Reviews of Modern Physics",
+        "url": "https://feeds.aps.org/rss/recent/rmp.xml",
+    },
+    {
         "id": "nature_physics",
         "group": "nature",
         "journal": "Nature Physics",
@@ -75,6 +99,30 @@ DEFAULT_RSS_FEEDS = [
         "url": "https://www.nature.com/commsphys.rss",
     },
     {
+        "id": "nature_materials",
+        "group": "nature_ext",
+        "journal": "Nature Materials",
+        "url": "https://www.nature.com/nmat.rss",
+    },
+    {
+        "id": "nature_nanotechnology",
+        "group": "nature_ext",
+        "journal": "Nature Nanotechnology",
+        "url": "https://www.nature.com/nnano.rss",
+    },
+    {
+        "id": "nature_electronics",
+        "group": "nature_ext",
+        "journal": "Nature Electronics",
+        "url": "https://www.nature.com/natelectron.rss",
+    },
+    {
+        "id": "nature_photonics",
+        "group": "nature_ext",
+        "journal": "Nature Photonics",
+        "url": "https://www.nature.com/nphoton.rss",
+    },
+    {
         "id": "aip_apl",
         "group": "aip",
         "journal": "Applied Physics Letters",
@@ -83,9 +131,83 @@ DEFAULT_RSS_FEEDS = [
 ]
 
 RSS_CROSSREF_FALLBACKS = {
-    "aip": {
+    "aip_apl": {
+        "group": "aip",
+        "journal": "Applied Physics Letters",
         "query": "spin-orbit spintronics semiconductor Rashba Dresselhaus TRKR",
         "issn": "0003-6951",
+    },
+    "prx": {
+        "group": "pr_ext",
+        "journal": "Physical Review X",
+        "query": "spin-orbit spintronics semiconductor quantum materials optical spectroscopy",
+        "issn": "2160-3308",
+    },
+    "prresearch": {
+        "group": "pr_ext",
+        "journal": "Physical Review Research",
+        "query": "spin-orbit spintronics semiconductor Rashba exciton magnon",
+        "issn": "2643-1564",
+    },
+    "prmaterials": {
+        "group": "pr_ext",
+        "journal": "Physical Review Materials",
+        "query": "spin-orbit semiconductor two-dimensional materials magnetism exciton",
+        "issn": "2475-9953",
+    },
+    "rmp": {
+        "group": "pr_ext",
+        "journal": "Reviews of Modern Physics",
+        "query": "spintronics spin-orbit semiconductor two-dimensional materials magnetism",
+        "issn": "0034-6861",
+    },
+    "nano_letters": {
+        "group": "nano_2d",
+        "journal": "Nano Letters",
+        "query": "spin-orbit spintronics two-dimensional materials exciton valley semiconductor",
+        "issn": "1530-6992",
+    },
+    "acs_nano": {
+        "group": "nano_2d",
+        "journal": "ACS Nano",
+        "query": "two-dimensional materials spin exciton valley magnetism photonics",
+        "issn": "1936-086X",
+    },
+    "acs_photonics": {
+        "group": "nano_2d",
+        "journal": "ACS Photonics",
+        "query": "spin optical spectroscopy exciton valley semiconductor photonics",
+        "issn": "2330-4022",
+    },
+    "acs_ami": {
+        "group": "nano_2d",
+        "journal": "ACS Applied Materials & Interfaces",
+        "query": "spintronics two-dimensional semiconductor optical materials exciton",
+        "issn": "1944-8252",
+    },
+    "two_d_materials": {
+        "group": "nano_2d",
+        "journal": "2D Materials",
+        "query": "two-dimensional semiconductor spin-orbit exciton valley magnetism",
+        "issn": "2053-1583",
+    },
+    "science_advances": {
+        "group": "broad_high",
+        "journal": "Science Advances",
+        "query": "spin-orbit spintronics semiconductor two-dimensional materials exciton magnon",
+        "issn": "2375-2548",
+    },
+    "advanced_materials": {
+        "group": "broad_high",
+        "journal": "Advanced Materials",
+        "query": "spintronics two-dimensional materials semiconductor exciton magnetism photonics",
+        "issn": "1521-4095",
+    },
+    "advanced_science": {
+        "group": "broad_high",
+        "journal": "Advanced Science",
+        "query": "spin-orbit spintronics two-dimensional materials exciton valley magnetism",
+        "issn": "2198-3844",
     },
 }
 
@@ -538,7 +660,7 @@ def crossref_url(query: str, *, rows: int, lookback_days: int, issn: str = "") -
     return f"{CROSSREF_API_URL}?{urllib.parse.urlencode(params)}"
 
 
-def normalize_crossref_item(item: dict) -> dict | None:
+def normalize_crossref_item(item: dict, *, source_detail: str = "crossref") -> dict | None:
     title = compact_whitespace(" ".join(item.get("title") or []))
     if not title:
         return None
@@ -564,7 +686,7 @@ def normalize_crossref_item(item: dict) -> dict | None:
     url = item.get("URL") or (f"https://doi.org/{doi}" if doi else "")
     return {
         "source": "crossref",
-        "source_detail": "crossref",
+        "source_detail": source_detail,
         "journal": journal,
         "external_id": external_id,
         "doi": doi,
@@ -584,6 +706,7 @@ def fetch_crossref_entries(
     rows: int,
     lookback_days: int,
     issn: str = "",
+    source_detail: str = "crossref",
 ) -> list[dict]:
     if not queries or rows <= 0:
         return []
@@ -611,7 +734,7 @@ def fetch_crossref_entries(
 
         items = payload.get("message", {}).get("items", [])
         for item in items:
-            entry = normalize_crossref_item(item)
+            entry = normalize_crossref_item(item, source_detail=source_detail)
             if entry:
                 entries.append(entry)
     return entries
@@ -752,20 +875,42 @@ def rss_crossref_fallback_entries(
     groups_with_entries.discard(None)
 
     rows = env_int("PAPER_WATCH_RSS_CROSSREF_FALLBACK_ROWS", 10)
+    max_journals = max(0, env_int("PAPER_WATCH_RSS_CROSSREF_FALLBACK_MAX_JOURNALS", 6))
+    sleep_seconds = max(0.0, env_float("PAPER_WATCH_CROSSREF_SLEEP_SECONDS", 1.0))
     fallback_entries = []
+    fallback_count = 0
     for group in sorted(selected_groups):
-        fallback = RSS_CROSSREF_FALLBACKS.get(group)
-        if not fallback or group in groups_with_entries:
+        if group in groups_with_entries:
             continue
-        print(f"RSS group {group} had no entries; trying conservative Crossref fallback.")
-        fallback_entries.extend(
-            fetch_crossref_entries(
-                [fallback["query"]],
-                rows=rows,
-                lookback_days=lookback_days,
-                issn=fallback.get("issn", ""),
-            )
+        fallbacks = [
+            (fallback_id, fallback)
+            for fallback_id, fallback in RSS_CROSSREF_FALLBACKS.items()
+            if fallback["group"] == group
+        ]
+        if not fallbacks:
+            continue
+
+        remaining = max_journals - fallback_count if max_journals else 0
+        if remaining <= 0:
+            break
+        selected_fallbacks = fallbacks[:remaining]
+        print(
+            f"RSS group {group} had no entries; trying "
+            f"{len(selected_fallbacks)} conservative Crossref fallback journal(s)."
         )
+        for fallback_id, fallback in selected_fallbacks:
+            if fallback_count > 0 and sleep_seconds:
+                time.sleep(sleep_seconds)
+            fallback_entries.extend(
+                fetch_crossref_entries(
+                    [fallback["query"]],
+                    rows=rows,
+                    lookback_days=lookback_days,
+                    issn=fallback.get("issn", ""),
+                    source_detail=f"crossref:{fallback_id}",
+                )
+            )
+            fallback_count += 1
     return fallback_entries
 
 
