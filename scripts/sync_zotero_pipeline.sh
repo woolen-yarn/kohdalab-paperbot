@@ -6,6 +6,13 @@ cd "$(dirname "$0")/.."
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.nas.yml}"
 ZOTERO_ARGS="${ZOTERO_ARGS:---download-pdfs}"
 INGEST_ARGS="${INGEST_ARGS:---source-prefix zotero/}"
+RUN_FLAGS="--rm"
+RUN_FLAGS_T="--rm -T"
+
+if [ "${COMPOSE_RUN_BUILD:-1}" = "1" ]; then
+  RUN_FLAGS="--build $RUN_FLAGS"
+  RUN_FLAGS_T="--build $RUN_FLAGS_T"
+fi
 
 if [ "${REBUILD:-0}" = "1" ]; then
   INGEST_ARGS="--rebuild --source-prefix zotero/"
@@ -15,6 +22,14 @@ compose() {
   docker compose -f "$COMPOSE_FILE" "$@"
 }
 
+compose_run() {
+  compose run $RUN_FLAGS "$@"
+}
+
+compose_run_t() {
+  compose run $RUN_FLAGS_T "$@"
+}
+
 step() {
   printf '\n==> %s\n' "$1"
 }
@@ -22,7 +37,7 @@ step() {
 notify_failure() {
   status="$1"
   message="$2"
-  compose run --rm -T zotero python -m rag_poc.sync_notify failure \
+  compose_run_t zotero python -m rag_poc.sync_notify failure \
     --exit-code "$status" \
     --message "$message" || true
 }
@@ -40,16 +55,16 @@ step "Ensure runtime directories"
 mkdir -p rag_poc/papers/zotero rag_poc/index logs
 
 step "Check Ollama embedding endpoint"
-run_or_notify compose run --rm zotero python -c 'import os; from rag_poc.ollama_client import embed, base_url; model=os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text"); embed("paperbot connectivity test", model, timeout=60); print(f"ok {base_url()} {model}")'
+run_or_notify compose_run zotero python -c 'import os; from rag_poc.ollama_client import embed, base_url; model=os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text"); embed("paperbot connectivity test", model, timeout=60); print(f"ok {base_url()} {model}")'
 
 step "Sync Zotero metadata and unique PDFs"
-run_or_notify compose run --rm zotero python rag_poc/zotero_sync.py $ZOTERO_ARGS
+run_or_notify compose_run zotero python rag_poc/zotero_sync.py $ZOTERO_ARGS
 
 step "Ingest Zotero PDFs"
-run_or_notify compose run --rm ingest python rag_poc/ingest.py $INGEST_ARGS
+run_or_notify compose_run ingest python rag_poc/ingest.py $INGEST_ARGS
 
 step "Build lab interest profile"
-run_or_notify compose run --rm -T ingest python -m rag_poc.lab_profile
+run_or_notify compose_run_t ingest python -m rag_poc.lab_profile
 
 if [ "${SKIP_RESTART:-0}" != "1" ]; then
   step "Restart PaperBot"
@@ -57,7 +72,7 @@ if [ "${SKIP_RESTART:-0}" != "1" ]; then
 fi
 
 step "Pipeline report"
-if compose run --rm -T zotero python - <<'PY'
+if compose_run_t zotero python - <<'PY'
 import sqlite3
 from pathlib import Path
 
@@ -112,6 +127,6 @@ else
 fi
 
 step "Notify Slack"
-compose run --rm -T zotero python -m rag_poc.sync_notify success || true
+compose_run_t zotero python -m rag_poc.sync_notify success || true
 
 step "Done"

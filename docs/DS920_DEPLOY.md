@@ -142,7 +142,8 @@ Create the tasks in DSM Control Panel > Task Scheduler. Use `root` as the owner.
 | `Paperbot-Nano` | Fourth Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups nano_2d,broad_high` |
 
 The weekly/monthly split keeps publisher access light and makes Slack posts
-easier to read.
+easier to read. Paper Watch posts one Slack message per selected paper. If a
+run selects five papers, Slack should receive five separate messages.
 
 ## 6. Manual Paper Watch
 
@@ -189,6 +190,11 @@ cd /volume1/docker/paperbot
 sudo git pull origin master
 sudo docker compose -f docker-compose.nas.yml up -d --build paperbot
 ```
+
+`docker-compose.nas.yml` uses a shared `kohdalab-paperbot:local` image for all
+services. The scheduled scripts run one-off containers with `--build` by
+default, which prevents `paper-watch` from using an old image after code changes.
+Set `COMPOSE_RUN_BUILD=0` only for troubleshooting.
 
 If the RAG schema or chunking changed:
 

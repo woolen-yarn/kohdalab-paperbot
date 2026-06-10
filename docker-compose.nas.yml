@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: kohdalab-paperbot:local
     container_name: kohdalab-paperbot
     restart: unless-stopped
     env_file:
@@ -17,6 +18,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: kohdalab-paperbot:local
     profiles: ["tools"]
     env_file:
       - .env
@@ -30,6 +32,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: kohdalab-paperbot:local
     profiles: ["tools"]
     env_file:
       - .env
@@ -43,6 +46,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: kohdalab-paperbot:local
     profiles: ["tools"]
     env_file:
       - .env
@@ -56,6 +60,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: kohdalab-paperbot:local
     profiles: ["tools"]
     env_file:
       - .env
