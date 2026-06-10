@@ -104,6 +104,32 @@ PROFILE_TERMS = {
             ["spin hall", "spin-orbit torque", "rashba-edelstein", "spin current"],
         ),
     ],
+    "applications": [
+        (
+            "semiconductor spintronics devices",
+            ["spintronics", "spin transistor", "spin fet", "spin field effect", "spin device"],
+        ),
+        (
+            "spin memory and MRAM",
+            ["mram", "magnetic memory", "spin memory", "magnetic tunnel junction"],
+        ),
+        (
+            "spin-wave and wave-parallel computing",
+            ["wave-parallel", "spin-based wave", "spin wave logic", "magnonic logic"],
+        ),
+        (
+            "valleytronics and excitonic devices",
+            ["valleytronics", "valley device", "exciton transport", "trion", "biexciton"],
+        ),
+        (
+            "optoelectronics and photonics",
+            ["optoelectronic", "photonic", "photodetector", "nonlinear optical", "light emitting"],
+        ),
+        (
+            "quantum materials and quantum technology",
+            ["quantum technology", "quantum material", "quantum information", "topological"],
+        ),
+    ],
 }
 
 
@@ -155,7 +181,7 @@ def load_documents(
     try:
         rows = conn.execute(
             """
-            SELECT pdf_path, title, abstract, tags_json, year, journal
+            SELECT pdf_path, title, abstract, tags_json, authors_json, year, journal
             FROM papers
             WHERE COALESCE(is_duplicate, 0) = 0
             ORDER BY date_added DESC, zotero_key
@@ -166,13 +192,17 @@ def load_documents(
     except sqlite3.OperationalError:
         rows = []
 
-    for pdf_path, title, abstract, tags_json, year, journal in rows:
+    for pdf_path, title, abstract, tags_json, authors_json, year, journal in rows:
         source = pdf_path or title
         tags = parse_json_list(tags_json)
-        text = "\n".join([title or "", abstract or "", " ".join(tags), journal or ""])
+        authors = parse_json_list(authors_json)
+        text = "\n".join(
+            [title or "", abstract or "", " ".join(tags), " ".join(authors), journal or ""]
+        )
         documents[source] = {
             "source": source,
             "title": title or source,
+            "authors": authors,
             "year": year or "",
             "journal": journal or "",
             "text": text,
@@ -202,6 +232,7 @@ def load_documents(
             documents[source] = {
                 "source": source,
                 "title": source,
+                "authors": [],
                 "year": "",
                 "journal": "",
                 "text": "",
@@ -239,11 +270,44 @@ def rank_category(documents: list[dict], category: str) -> list[dict]:
     return ranked
 
 
+def rank_metadata(documents: list[dict], field: str, *, top: int) -> list[dict]:
+    counts: dict[str, dict] = {}
+    for document in documents:
+        raw_values = document.get(field, [])
+        values = raw_values if isinstance(raw_values, list) else [raw_values]
+        seen_in_doc = set()
+        for value in values:
+            label = compact_whitespace(str(value))
+            if not label or label.lower() in {"unknown", "unknown authors"}:
+                continue
+            key = label.lower()
+            if key in seen_in_doc:
+                continue
+            seen_in_doc.add(key)
+            if key not in counts:
+                counts[key] = {
+                    "label": label,
+                    "document_count": 0,
+                    "hit_count": 0,
+                    "examples": [],
+                }
+            counts[key]["document_count"] += 1
+            counts[key]["hit_count"] += 1
+            if len(counts[key]["examples"]) < 3:
+                counts[key]["examples"].append(document["title"])
+
+    ranked = list(counts.values())
+    ranked.sort(key=lambda item: (-item["document_count"], item["label"].lower()))
+    return ranked[:top]
+
+
 def build_profile(documents: list[dict], *, top: int) -> dict:
     categories = {
         category: rank_category(documents, category)[:top]
-        for category in ("materials", "methods", "physics")
+        for category in ("materials", "methods", "physics", "applications")
     }
+    categories["journals"] = rank_metadata(documents, "journal", top=top)
+    categories["authors"] = rank_metadata(documents, "authors", top=top)
     return {
         "generated_at": utc_now(),
         "source": "rag_poc/index/chunks.sqlite3",
@@ -264,6 +328,9 @@ def profile_to_markdown(profile: dict) -> str:
         "materials": "Materials / 材料系",
         "methods": "Methods / 手法",
         "physics": "Physics / 物理",
+        "applications": "Applications / 応用",
+        "journals": "Journals / 掲載誌",
+        "authors": "Authors / 著者",
     }
     for category, heading in headings.items():
         lines.append(f"## {heading}")
