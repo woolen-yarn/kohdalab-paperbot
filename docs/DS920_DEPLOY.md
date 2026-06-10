@@ -51,6 +51,8 @@ SLACK_APP_TOKEN=xapp-...
 OLLAMA_BASE_URL=http://10.32.145.143:11434
 OLLAMA_CHAT_MODEL=gpt-oss:20b
 OLLAMA_EMBED_MODEL=nomic-embed-text
+PAPERBOT_TRANSLATION_MODEL=qwen3:14b
+PAPERBOT_TRANSLATION_ENABLED=true
 PAPERBOT_TOP_K=6
 PAPERBOT_SHORT_TOP_K=3
 PAPERBOT_DEEP_TOP_K=8
@@ -83,6 +85,8 @@ PAPER_WATCH_BILINGUAL_INTRO=true
 PAPER_WATCH_INCLUDE_ABSTRACT=false
 PAPER_WATCH_VERBOSE_MESSAGE=false
 PAPER_WATCH_SUMMARY_MODEL=gpt-oss:20b
+PAPER_WATCH_TRANSLATION_MODEL=qwen3:14b
+PAPER_WATCH_TRANSLATION_ENABLED=true
 PAPER_WATCH_USE_RAG_SCORE=true
 PAPER_WATCH_EMBED_MODEL=nomic-embed-text
 PAPER_WATCH_RAG_WEIGHT=8
@@ -96,7 +100,8 @@ PAPER_WATCH_RAG_MIN_TERM_SCORE=1
 Paper Watchは研究室プロファイル語の `term_score` に加えて、候補abstractをembeddingし、
 既存PDF RAG indexとの類似度 `rag_score` も使います。最終スコアは
 `term_score + rag_score * PAPER_WATCH_RAG_WEIGHT` です。
-投稿文の紹介はOllamaで日英併記生成します。通常のSlack投稿は軽量表示で、
+投稿文の英語紹介は `PAPER_WATCH_SUMMARY_MODEL`、日本語化は
+`PAPER_WATCH_TRANSLATION_MODEL` で行います。通常のSlack投稿は軽量表示で、
 タイトル、著者、日英紹介、リンク、近い研究室PDFだけを表示します。
 `PAPER_WATCH_VERBOSE_MESSAGE=true` でスコア詳細、`PAPER_WATCH_INCLUDE_ABSTRACT=true`
 でAbstract表示を戻せます。

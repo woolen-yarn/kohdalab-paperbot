@@ -72,9 +72,11 @@ from rag_poc.ask import (
     EMBED_MODEL,
     SHORT_TOP_K,
     TOP_K,
+    TRANSLATION_MODEL,
     answer_question,
     format_source_ids,
     format_sources,
+    translation_enabled,
 )
 
 SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
@@ -165,6 +167,8 @@ def command_model() -> str:
             f"`OLLAMA_BASE_URL`: `{os.environ.get('OLLAMA_BASE_URL', 'default')}`",
             f"`OLLAMA_CHAT_MODEL`: `{CHAT_MODEL}`",
             f"`OLLAMA_EMBED_MODEL`: `{EMBED_MODEL}`",
+            f"`PAPERBOT_TRANSLATION_MODEL`: `{TRANSLATION_MODEL or 'disabled'}`",
+            f"`PAPERBOT_TRANSLATION_ENABLED`: `{translation_enabled()}`",
             f"`PAPERBOT_TOP_K`: `{TOP_K}`",
             f"`PAPERBOT_SHORT_TOP_K`: `{SHORT_TOP_K}`",
             f"`PAPERBOT_DEEP_TOP_K`: `{DEEP_TOP_K}`",
@@ -200,9 +204,11 @@ def ollama_status() -> str:
     model_names = set(re.findall(r'"name"\s*:\s*"([^"]+)"', body))
     chat_ok = CHAT_MODEL in model_names
     embed_ok = EMBED_MODEL in model_names
+    translation_ok = not TRANSLATION_MODEL or TRANSLATION_MODEL in model_names
     return (
         f"`ok` chat=`{CHAT_MODEL}` {'ok' if chat_ok else 'missing'} / "
-        f"embed=`{EMBED_MODEL}` {'ok' if embed_ok else 'missing'}"
+        f"embed=`{EMBED_MODEL}` {'ok' if embed_ok else 'missing'} / "
+        f"translate=`{TRANSLATION_MODEL or 'disabled'}` {'ok' if translation_ok else 'missing'}"
     )
 
 
