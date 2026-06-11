@@ -112,15 +112,17 @@ These are the intended Synology DSM Task Scheduler entries. The tasks run as
 | DSM task | Timing | Purpose | Command |
 | --- | --- | --- | --- |
 | `Paperbot` | Every day 08:00 | Zotero metadata/PDF sync, incremental RAG ingest, profile rebuild, Slack status notification | `cd /volume1/docker/paperbot && ./scripts/sync_zotero_pipeline.sh` |
-| `Paperbot-arXiv` | Every Monday 09:00 | Weekly arXiv recommendation | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources arxiv` |
-| `Paperbot-PR` | First Monday 09:30 | Monthly APS Physical Review watch | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups pr,pr_ext` |
-| `Paperbot-Nature` | Second Monday 09:30 | Monthly Nature-family watch | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups nature,nature_ext` |
-| `Paperbot-AIP` | Third Monday 09:30 | Monthly AIP / Applied Physics Letters watch | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups aip` |
-| `Paperbot-Japan` | Third Monday 10:00 | Monthly Japanese/applied physics watch | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups japan,iop_semiconductor,optics` |
-| `Paperbot-Nano` | Fourth Monday 09:30 | Monthly nano, 2D materials, and broad high-impact watch | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups nano_2d,broad_high` |
+| `Paperbot-collect` | Every day 08:30 | Collect broad paper metadata, deduplicate, score, and store in SQLite without Slack posts | `cd /volume1/docker/paperbot && ./scripts/collect_paper_watch.sh --lookback-days 7` |
+| `Paperbot-arXiv-report` | Every Monday 09:00 | Weekly arXiv report from stored metadata | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope arxiv --lookback-days 7 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Weekly arXiv"` |
+| `Paperbot-PR-report` | First Monday 09:30 | Monthly APS Physical Review report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups pr,pr_ext --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly PR"` |
+| `Paperbot-Nature-report` | Second Monday 09:30 | Monthly Nature-family report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups nature,nature_ext --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nature"` |
+| `Paperbot-AIP-report` | Third Monday 09:30 | Monthly AIP / APL / JAP report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups aip --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly AIP"` |
+| `Paperbot-Japan-report` | Third Monday 10:00 | Monthly Japanese/applied physics report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups japan,iop_semiconductor,optics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Japan/Applied Physics"` |
+| `Paperbot-Nano-report` | Fourth Monday 09:30 | Monthly nano, 2D materials, and broad high-impact report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups nano_2d,broad_high --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nano/High Impact"` |
 
-The staggered monthly jobs keep publisher access conservative and prevent Slack
-from receiving all journal alerts on the same morning.
+Paper Watch does not send immediate alerts in the production schedule. Daily
+collection stores metadata and scores only; Slack posts are generated from the
+stored database by weekly and monthly report tasks.
 
 ## Deployment
 
@@ -202,19 +204,22 @@ Useful bot commands:
 
 ## Paper Watch
 
-Paper Watch fetches candidates, deduplicates them by DOI or normalized title,
-scores them with the lab profile and RAG similarity, and posts compact Slack
-messages one paper at a time. Each selected paper is sent with a separate
-`chat.postMessage` call; a five-paper run produces five Slack messages, not one
-combined digest.
+Paper Watch is split into collection and reporting.
+
+Daily collection fetches metadata only, deduplicates by DOI or normalized title,
+scores papers with the lab profile, and stores the result in SQLite. It does not
+post to Slack. Weekly and monthly report tasks then select the highest-scoring
+stored papers and post compact Slack messages one paper at a time. Each selected
+paper is sent with a separate `chat.postMessage` call; an eight-paper report
+produces eight Slack messages, not one combined digest.
 
 Scoring inputs:
 
 - profile terms from the indexed lab PDFs
 - title and abstract term matches
-- candidate abstract embedding similarity to the SQLite RAG index
+- optional candidate abstract embedding similarity to the SQLite RAG index
 - journal/source group
-- duplicate suppression via `seen_papers`
+- duplicate suppression via DOI and normalized title
 
 Default source groups:
 
@@ -246,19 +251,25 @@ Access policy:
 Manual dry run:
 
 ```bash
-sudo ./scripts/run_paper_watch.sh --dry-run --sources arxiv --post-limit 3
+sudo ./scripts/collect_paper_watch.sh --dry-run --sources arxiv --lookback-days 7
 ```
 
-Post one arXiv paper for testing:
+Dry run the weekly arXiv report from stored metadata:
 
 ```bash
-sudo ./scripts/run_paper_watch.sh --sources arxiv --post-limit 1 --min-score 0
+sudo ./scripts/report_paper_watch.sh --dry-run --report-scope arxiv --lookback-days 7 --post-limit 3
 ```
 
-Run a journal group without summaries:
+Dry run a monthly journal report from stored metadata:
 
 ```bash
-sudo ./scripts/run_paper_watch.sh --dry-run --sources rss --rss-groups nature,nature_ext --no-summary
+sudo ./scripts/report_paper_watch.sh --dry-run --report-scope journals --rss-groups nature,nature_ext --lookback-days 35 --post-limit 3
+```
+
+Immediate fetch-and-post mode is retained for manual debugging only:
+
+```bash
+sudo ./scripts/run_paper_watch.sh --mode run --sources arxiv --post-limit 1 --min-score 0
 ```
 
 Inspect which journals are actually common in the current Zotero-backed SQLite

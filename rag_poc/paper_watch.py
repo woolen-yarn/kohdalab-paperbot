@@ -534,6 +534,12 @@ def init_db(path: Path) -> sqlite3.Connection:
         ON paper_watch_items(posted_at, score, published_at)
         """
     )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_paper_watch_first_seen_score
+        ON paper_watch_items(first_seen_at, posted_at, score)
+        """
+    )
     return conn
 
 
@@ -1495,6 +1501,146 @@ def mark_posted(conn: sqlite3.Connection, items: list[dict]) -> None:
     )
 
 
+def paper_watch_group_maps() -> tuple[dict[str, str], dict[str, str]]:
+    id_to_group = {feed["id"]: feed["group"] for feed in rss_feeds()}
+    journal_to_group = {
+        normalize_title_for_dedupe(feed["journal"]): feed["group"]
+        for feed in rss_feeds()
+    }
+    for fallback_id, fallback in RSS_CROSSREF_FALLBACKS.items():
+        id_to_group[f"crossref:{fallback_id}"] = fallback["group"]
+        id_to_group[fallback_id] = fallback["group"]
+        journal_to_group[normalize_title_for_dedupe(fallback["journal"])] = fallback["group"]
+    return id_to_group, journal_to_group
+
+
+def item_group(item: dict) -> str:
+    id_to_group, journal_to_group = paper_watch_group_maps()
+    source_detail = item.get("source_detail", "")
+    if source_detail in id_to_group:
+        return id_to_group[source_detail]
+    journal_key = normalize_title_for_dedupe(item.get("journal", ""))
+    return journal_to_group.get(journal_key, "")
+
+
+def row_to_watch_item(
+    row: sqlite3.Row | tuple,
+    metadata_by_source: dict[str, dict],
+) -> dict:
+    rag_source = row[11] or ""
+    dedupe_key = row[15] or ""
+    title_key = row[16] or ""
+    return {
+        "source": row[0],
+        "external_id": row[1],
+        "title": row[2],
+        "authors": json.loads(row[3]),
+        "summary": row[4],
+        "url": row[5],
+        "published_at": row[6],
+        "score": row[7],
+        "reasons": json.loads(row[8]),
+        "term_score": row[9],
+        "rag_score": row[10],
+        "rag_source": rag_source,
+        "rag_source_label": format_rag_source_label(
+            rag_source,
+            metadata_by_source.get(rag_source, {}),
+        ) if rag_source else "",
+        "rag_page_start": row[12],
+        "rag_page_end": row[13],
+        "doi": row[14] or "",
+        "dedupe_key": dedupe_key,
+        "title_key": title_key,
+        "source_detail": row[17] or "",
+        "journal": row[18] or "",
+    }
+
+
+def selected_report_groups(args: argparse.Namespace) -> set[str]:
+    return {group.strip().lower() for group in args.rss_groups.split(",") if group.strip()}
+
+
+def report_scope_match(item: dict, scope: str, selected_groups: set[str]) -> bool:
+    if scope == "all":
+        return True
+    if scope == "arxiv":
+        return item.get("source") == "arxiv"
+    if scope == "journals":
+        if item.get("source") == "arxiv":
+            return False
+        if not selected_groups:
+            return True
+        return item_group(item) in selected_groups
+    return True
+
+
+def select_report_candidates(
+    conn: sqlite3.Connection,
+    *,
+    min_score: float,
+    limit: int,
+    lookback_days: int,
+    scope: str,
+    selected_groups: set[str],
+) -> list[dict]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+    cutoff_text = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+    fetch_limit = max(limit * 25, limit)
+    metadata_by_source = load_metadata_by_source(conn)
+    rows = conn.execute(
+        """
+        SELECT source, external_id, title, authors_json, summary, url,
+               published_at, score, reasons_json,
+               term_score, rag_score, rag_source, rag_page_start, rag_page_end,
+               doi, dedupe_key, title_key, source_detail, journal
+        FROM paper_watch_items AS candidate
+        WHERE candidate.posted_at IS NULL
+          AND candidate.score >= ?
+          AND candidate.first_seen_at >= ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM paper_watch_items AS posted
+              WHERE posted.posted_at IS NOT NULL
+                AND posted.dedupe_key IS NOT NULL
+                AND posted.dedupe_key = candidate.dedupe_key
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM paper_watch_items AS posted
+              WHERE posted.posted_at IS NOT NULL
+                AND posted.title_key IS NOT NULL
+                AND posted.title_key = candidate.title_key
+          )
+        ORDER BY score DESC, first_seen_at DESC, published_at DESC
+        LIMIT ?
+        """,
+        (min_score, cutoff_text, fetch_limit),
+    ).fetchall()
+
+    items = []
+    seen_dedupe_keys = set()
+    for row in rows:
+        item = row_to_watch_item(row, metadata_by_source)
+        if not report_scope_match(item, scope, selected_groups):
+            continue
+        dedupe_key = item.get("dedupe_key") or ""
+        title_key = item.get("title_key") or ""
+        identity_key = dedupe_key or (f"title:{title_key}" if title_key else "")
+        title_identity_key = f"title:{title_key}" if title_key else ""
+        if identity_key and identity_key in seen_dedupe_keys:
+            continue
+        if title_identity_key and title_identity_key in seen_dedupe_keys:
+            continue
+        for key in (identity_key, title_identity_key):
+            if key:
+                seen_dedupe_keys.add(key)
+        items.append(item)
+        if len(items) >= limit:
+            break
+    return items
+
+
 def compact_authors(authors: list[str]) -> str:
     if not authors:
         return "Unknown authors"
@@ -1517,6 +1663,10 @@ def source_label(item: dict) -> str:
     if item.get("source") == "rss":
         return item.get("journal") or item.get("source_detail") or "RSS"
     return item.get("source", "unknown")
+
+
+def report_label(item: dict) -> str:
+    return item.get("report_label") or "Paper Watch"
 
 
 def relevance_grade(item: dict) -> str:
@@ -1789,8 +1939,9 @@ def build_item_message(
     reasons = compact_reasons(item)
     grade = relevance_grade(item)
     source = source_label(item)
+    label = report_label(item)
     lines = [
-        f":newspaper: *Paper Watch*  `[{grade}] {source}`",
+        f":newspaper: *{label}*  `[{grade}] {source}`",
         f"*{item['title']}*",
         compact_authors(item["authors"]),
         f":dart: match: {reasons}",
@@ -1836,13 +1987,14 @@ def build_item_blocks(
     nearest = slack_escape(nearest_pdf_label(item)) if use_rag_score else ""
     published = item.get("published_at") or ""
     source_id = slack_escape(f"{item['source']}:{item['external_id']}")
+    label = slack_escape(report_label(item))
 
     blocks: list[dict] = [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f":newspaper: *Paper Watch*  `[{grade}] {source}`",
+                "text": f":newspaper: *{label}*  `[{grade}] {source}`",
             },
         },
         {
@@ -2063,6 +2215,15 @@ def post_candidate_messages(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Find and post relevant new papers.")
+    parser.add_argument(
+        "--mode",
+        choices=["collect", "report", "run"],
+        default=os.environ.get("PAPER_WATCH_MODE", "run"),
+        help=(
+            "collect stores metadata and scores without Slack posts; "
+            "report posts from stored items; run fetches and posts immediately."
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print candidates without posting.")
     parser.add_argument("--notify-empty", action="store_true", help="Post even when no papers matched.")
     parser.add_argument("--max-results", type=int, default=env_int("PAPER_WATCH_MAX_RESULTS", 80))
@@ -2075,6 +2236,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include-abstract", action="store_true", help="Include abstracts in Slack output.")
     parser.add_argument("--verbose-message", action="store_true", help="Include profile and score details in Slack output.")
     parser.add_argument(
+        "--report-scope",
+        choices=["arxiv", "journals", "all"],
+        default=os.environ.get("PAPER_WATCH_REPORT_SCOPE", "all"),
+        help="Stored-paper scope used by --mode report.",
+    )
+    parser.add_argument(
+        "--report-title",
+        default=os.environ.get("PAPER_WATCH_REPORT_TITLE", ""),
+        help="Slack label for --mode report messages.",
+    )
+    parser.add_argument(
+        "--no-mark-reported",
+        action="store_true",
+        help="Do not mark reported papers as posted after Slack delivery.",
+    )
+    parser.add_argument(
         "--no-rag-score",
         action="store_true",
         help="Disable abstract-to-RAG-index similarity scoring.",
@@ -2082,14 +2259,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
-    terms = profile_terms()
-    sources = (
+def selected_sources(args: argparse.Namespace) -> set[str]:
+    return (
         {source.strip().lower() for source in args.sources.split(",") if source.strip()}
         if args.sources
         else paper_watch_sources()
     )
+
+
+def fetch_and_score_entries(args: argparse.Namespace, terms: dict[str, float]) -> list[dict]:
+    sources = selected_sources(args)
     cutoff = datetime.now(timezone.utc) - timedelta(days=args.lookback_days)
 
     entries = []
@@ -2146,11 +2325,127 @@ def main() -> None:
         entry["rag_page_end"] = None
         entry["reasons"] = reasons
         filtered_entries.append(entry)
-    entries = filtered_entries
+    return filtered_entries
+
+
+def collection_use_rag_score(args: argparse.Namespace) -> bool:
+    if args.no_rag_score:
+        return False
+    if args.mode == "collect":
+        return env_bool("PAPER_WATCH_COLLECT_USE_RAG_SCORE", False)
+    return env_bool("PAPER_WATCH_USE_RAG_SCORE", True)
+
+
+def report_title(args: argparse.Namespace) -> str:
+    if args.report_title:
+        return args.report_title
+    if args.report_scope == "arxiv":
+        return "Paper Watch Weekly arXiv"
+    if args.report_scope == "journals":
+        groups = selected_report_groups(args)
+        if groups:
+            return "Paper Watch Journal Report"
+        return "Paper Watch Monthly Journals"
+    return "Paper Watch Report"
+
+
+def apply_report_label(items: list[dict], label: str) -> None:
+    for item in items:
+        item["report_label"] = label
+
+
+def collect_mode(args: argparse.Namespace, terms: dict[str, float]) -> None:
+    entries = fetch_and_score_entries(args, terms)
+    if args.dry_run:
+        print(
+            "Paper Watch collect dry-run: "
+            f"fetched={len(entries)} db_write=false"
+        )
+        return
 
     conn = init_db(INDEX_DB_PATH)
     try:
+        use_rag_score = collection_use_rag_score(args)
+        apply_rag_scores(entries, conn, enabled=use_rag_score)
+        new_count = 0
+        for entry in entries:
+            if upsert_entry(conn, entry):
+                new_count += 1
+        conn.commit()
+        print(
+            "Paper Watch collect: "
+            f"fetched={len(entries)} new_seen={new_count} "
+            f"mode=metadata-only rag_score={str(use_rag_score).lower()}"
+        )
+    finally:
+        conn.close()
+
+
+def report_mode(args: argparse.Namespace) -> None:
+    conn = init_db(INDEX_DB_PATH)
+    try:
+        candidates = select_report_candidates(
+            conn,
+            min_score=args.min_score,
+            limit=args.post_limit,
+            lookback_days=args.lookback_days,
+            scope=args.report_scope,
+            selected_groups=selected_report_groups(args),
+        )
+        label = report_title(args)
+        apply_report_label(candidates, label)
         use_rag_score = env_bool("PAPER_WATCH_USE_RAG_SCORE", True) and not args.no_rag_score
+        if candidates:
+            include_intro = env_bool("PAPER_WATCH_BILINGUAL_INTRO", True) and not args.no_summary
+            include_abstract = (
+                env_bool("PAPER_WATCH_INCLUDE_ABSTRACT", False) or args.include_abstract
+            )
+            verbose_message = (
+                env_bool("PAPER_WATCH_VERBOSE_MESSAGE", False) or args.verbose_message
+            )
+            payloads = build_item_payloads(
+                candidates,
+                include_intro=include_intro,
+                use_rag_score=use_rag_score,
+                include_abstract=include_abstract,
+                verbose=verbose_message,
+            )
+            print("\n\n---\n\n".join(payload["text"] for payload in payloads))
+            if not args.dry_run:
+                if args.no_mark_reported:
+                    posted = 0
+                    for index, payload in enumerate(payloads, start=1):
+                        print(f"Paper Watch Slack post {index}/{len(payloads)}")
+                        if not post_to_slack(payload["text"], blocks=payload.get("blocks")):
+                            break
+                        posted += 1
+                else:
+                    posted = post_candidate_messages(conn, candidates, payloads)
+                print(
+                    "Paper Watch report complete: "
+                    f"posted={posted} messages for {len(candidates)} papers"
+                )
+        elif args.notify_empty:
+            message = f"{label}: no stored matching papers found."
+            print(message)
+            if not args.dry_run:
+                post_to_slack(message)
+        else:
+            print(
+                "Paper Watch report: "
+                f"scope={args.report_scope} lookback_days={args.lookback_days} "
+                f"candidates=0 min_score={args.min_score}"
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def run_mode(args: argparse.Namespace, terms: dict[str, float]) -> None:
+    entries = fetch_and_score_entries(args, terms)
+    conn = init_db(INDEX_DB_PATH)
+    try:
+        use_rag_score = collection_use_rag_score(args)
         apply_rag_scores(entries, conn, enabled=use_rag_score)
         new_count = 0
         for entry in entries:
@@ -2193,6 +2488,17 @@ def main() -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def main() -> None:
+    args = parse_args()
+    terms = profile_terms()
+    if args.mode == "collect":
+        collect_mode(args, terms)
+    elif args.mode == "report":
+        report_mode(args)
+    else:
+        run_mode(args, terms)
 
 
 if __name__ == "__main__":
