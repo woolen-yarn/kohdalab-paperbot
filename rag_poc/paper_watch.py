@@ -1611,6 +1611,43 @@ def score_summary(item: dict, *, use_rag_score: bool) -> str:
     return " ".join(parts)
 
 
+def slack_escape(text: str) -> str:
+    return html.escape(str(text or ""), quote=False)
+
+
+def slack_block_text(text: str, limit: int = 2900) -> str:
+    cleaned = str(text or "").strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 1].rstrip() + "…"
+
+
+def split_bilingual_intro(intro: str) -> tuple[str, str]:
+    english_lines: list[str] = []
+    japanese_lines: list[str] = []
+    current = ""
+    for raw_line in intro.splitlines():
+        line = raw_line.strip()
+        if line.startswith("EN:"):
+            current = "en"
+            english_lines.append(line[3:].strip())
+            continue
+        if line.startswith("JA:"):
+            current = "ja"
+            japanese_lines.append(line[3:].strip())
+            continue
+        if current == "en":
+            english_lines.append(raw_line)
+        elif current == "ja":
+            japanese_lines.append(raw_line)
+
+    english = "\n".join(english_lines).strip()
+    japanese = "\n".join(japanese_lines).strip()
+    if not english and not japanese:
+        english = intro.strip()
+    return english, japanese
+
+
 def build_item_message(
     item: dict,
     *,
@@ -1618,15 +1655,16 @@ def build_item_message(
     use_rag_score: bool = False,
     include_abstract: bool = False,
     verbose: bool = False,
+    intro: str | None = None,
 ) -> str:
     reasons = compact_reasons(item)
     grade = relevance_grade(item)
     source = source_label(item)
     lines = [
-        f"*Paper Watch*  `[{grade}] {source}`",
+        f":newspaper: *Paper Watch*  `[{grade}] {source}`",
         f"*{item['title']}*",
         compact_authors(item["authors"]),
-        f"match: {reasons}",
+        f":dart: match: {reasons}",
     ]
 
     nearest = nearest_pdf_label(item) if use_rag_score else ""
@@ -1638,7 +1676,8 @@ def build_item_message(
             f"`{item['source']}:{item['external_id']}`"
         )
 
-    intro = bilingual_intro(item, enabled=include_intro)
+    if intro is None:
+        intro = bilingual_intro(item, enabled=include_intro)
     if intro:
         lines.append(intro)
     if include_abstract:
@@ -1646,20 +1685,194 @@ def build_item_message(
 
     link = slack_link(item.get("url", ""))
     if link:
-        lines.append(f"link: {link}")
+        lines.append(f":link: link: {link}")
     return "\n".join(lines)
 
 
-def build_messages(
+def build_item_blocks(
+    item: dict,
+    *,
+    include_intro: bool = True,
+    use_rag_score: bool = False,
+    include_abstract: bool = False,
+    verbose: bool = False,
+    intro: str = "",
+) -> list[dict]:
+    reasons = slack_escape(compact_reasons(item))
+    grade = relevance_grade(item)
+    source = slack_escape(source_label(item))
+    title = slack_escape(item["title"])
+    authors = slack_escape(compact_authors(item["authors"]))
+    score_text = slack_escape(score_summary(item, use_rag_score=use_rag_score))
+    nearest = slack_escape(nearest_pdf_label(item)) if use_rag_score else ""
+    published = item.get("published_at") or ""
+    source_id = slack_escape(f"{item['source']}:{item['external_id']}")
+
+    blocks: list[dict] = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f":newspaper: *Paper Watch*  `[{grade}] {source}`",
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": slack_block_text(f"*{title}*\n{authors}", 2900),
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": slack_block_text(f":dart: *Match*\n{reasons}", 1900)},
+                {"type": "mrkdwn", "text": slack_block_text(f":bar_chart: *Score*\n`{score_text}`", 1900)},
+            ],
+        },
+    ]
+
+    if nearest:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": slack_block_text(f":books: *Nearest lab PDF*\n{nearest}", 2900),
+                },
+            }
+        )
+
+    if verbose:
+        blocks.append(
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": slack_block_text(
+                            f":label: `{source_id}`  :calendar: `{published}`",
+                            1900,
+                        ),
+                    }
+                ],
+            }
+        )
+
+    if include_intro and intro:
+        english_intro, japanese_intro = split_bilingual_intro(intro)
+        if english_intro:
+            blocks.extend(
+                [
+                    {"type": "divider"},
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": slack_block_text(
+                                f":microscope: *Technical Commentary*\n{slack_escape(english_intro)}",
+                                2900,
+                            ),
+                        },
+                    },
+                ]
+            )
+        if japanese_intro:
+            blocks.append(
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": slack_block_text(
+                            f":speech_balloon: *日本語メモ*\n{slack_escape(japanese_intro)}",
+                            2900,
+                        ),
+                    },
+                }
+            )
+
+    if include_abstract:
+        blocks.extend(
+            [
+                {"type": "divider"},
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": slack_block_text(
+                            f":page_facing_up: *Abstract*\n{slack_escape(truncate(item['summary'], 700))}",
+                            2900,
+                        ),
+                    },
+                },
+            ]
+        )
+
+    actions = []
+    url = item.get("url", "")
+    if url:
+        actions.append(
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Open paper", "emoji": True},
+                "url": url,
+                "action_id": "open_paper",
+            }
+        )
+    doi = item.get("doi", "")
+    if doi:
+        actions.append(
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "DOI", "emoji": True},
+                "url": f"https://doi.org/{doi}",
+                "action_id": "open_doi",
+            }
+        )
+    if actions:
+        blocks.extend([{"type": "divider"}, {"type": "actions", "elements": actions}])
+
+    return blocks
+
+
+def build_item_payload(
+    item: dict,
+    *,
+    include_intro: bool = True,
+    use_rag_score: bool = False,
+    include_abstract: bool = False,
+    verbose: bool = False,
+) -> dict:
+    intro = bilingual_intro(item, enabled=include_intro)
+    text = build_item_message(
+        item,
+        include_intro=include_intro,
+        use_rag_score=use_rag_score,
+        include_abstract=include_abstract,
+        verbose=verbose,
+        intro=intro,
+    )
+    blocks = build_item_blocks(
+        item,
+        include_intro=include_intro,
+        use_rag_score=use_rag_score,
+        include_abstract=include_abstract,
+        verbose=verbose,
+        intro=intro,
+    )
+    return {"text": text, "blocks": blocks}
+
+
+def build_item_payloads(
     items: list[dict],
     *,
     include_intro: bool = True,
     use_rag_score: bool = False,
     include_abstract: bool = False,
     verbose: bool = False,
-) -> list[str]:
+) -> list[dict]:
     return [
-        build_item_message(
+        build_item_payload(
             item,
             include_intro=include_intro,
             use_rag_score=use_rag_score,
@@ -1670,14 +1883,24 @@ def build_messages(
     ]
 
 
-def post_to_slack(text: str) -> bool:
+def post_to_slack(text: str, *, blocks: list[dict] | None = None) -> bool:
     token = os.environ.get("SLACK_BOT_TOKEN", "").strip()
     channel = os.environ.get("PAPER_WATCH_CHANNEL", "").strip()
     if not token or not channel:
         print("Paper Watch Slack post skipped: SLACK_BOT_TOKEN or PAPER_WATCH_CHANNEL is not set.")
         return False
     try:
-        WebClient(token=token).chat_postMessage(channel=channel, text=text)
+        payload = {"channel": channel, "text": text}
+        if blocks:
+            payload["blocks"] = blocks
+        client = WebClient(token=token)
+        try:
+            client.chat_postMessage(**payload)
+        except SlackApiError:
+            if not blocks:
+                raise
+            payload.pop("blocks", None)
+            client.chat_postMessage(**payload)
     except SlackApiError as exc:
         error = exc.response.get("error", "unknown_error")
         print(f"Paper Watch Slack post failed: {error}", file=sys.stderr)
@@ -1688,20 +1911,20 @@ def post_to_slack(text: str) -> bool:
 def post_candidate_messages(
     conn: sqlite3.Connection,
     candidates: list[dict],
-    messages: list[str],
+    payloads: list[dict],
 ) -> int:
-    if len(candidates) != len(messages):
+    if len(candidates) != len(payloads):
         raise RuntimeError(
-            f"Paper Watch message count mismatch: papers={len(candidates)} messages={len(messages)}"
+            f"Paper Watch message count mismatch: papers={len(candidates)} messages={len(payloads)}"
         )
 
     posted = 0
-    for index, (item, message) in enumerate(zip(candidates, messages), start=1):
+    for index, (item, payload) in enumerate(zip(candidates, payloads), start=1):
         print(
             "Paper Watch Slack post "
             f"{index}/{len(candidates)}: {truncate(item['title'], 90)}"
         )
-        if not post_to_slack(message):
+        if not post_to_slack(payload["text"], blocks=payload.get("blocks")):
             break
         mark_posted(conn, [item])
         conn.commit()
@@ -1813,16 +2036,16 @@ def main() -> None:
             verbose_message = (
                 env_bool("PAPER_WATCH_VERBOSE_MESSAGE", False) or args.verbose_message
             )
-            messages = build_messages(
+            payloads = build_item_payloads(
                 candidates,
                 include_intro=include_intro,
                 use_rag_score=use_rag_score,
                 include_abstract=include_abstract,
                 verbose=verbose_message,
             )
-            print("\n\n---\n\n".join(messages))
+            print("\n\n---\n\n".join(payload["text"] for payload in payloads))
             if not args.dry_run:
-                posted = post_candidate_messages(conn, candidates, messages)
+                posted = post_candidate_messages(conn, candidates, payloads)
                 print(
                     "Paper Watch Slack posts complete: "
                     f"posted={posted} messages for {len(candidates)} papers"
