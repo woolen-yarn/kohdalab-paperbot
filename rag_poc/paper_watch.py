@@ -549,6 +549,28 @@ def env_bool(name: str, default: bool) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+@lru_cache(maxsize=1)
+def load_lab_profile() -> dict:
+    if not LAB_PROFILE_PATH.exists():
+        return {}
+    try:
+        profile = json.loads(LAB_PROFILE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return profile if isinstance(profile, dict) else {}
+
+
+def term_pattern(term: str) -> str:
+    escaped = re.escape(term.lower()).replace(r"\ ", r"\s+")
+    if re.fullmatch(r"[a-z0-9+\-]+", term.lower()) and len(term) <= 5:
+        return rf"(?<![a-z0-9]){escaped}(?![a-z0-9])"
+    return escaped
+
+
+def text_has_term(text: str, term: str) -> bool:
+    return bool(re.search(term_pattern(term), text))
+
+
 def paper_watch_db_path() -> Path:
     configured = os.environ.get("PAPER_WATCH_DB_PATH", "").strip()
     if configured:
@@ -807,23 +829,111 @@ def ensure_paper_watch_columns(conn: sqlite3.Connection) -> None:
 
 def profile_terms() -> dict[str, float]:
     raw = os.environ.get("PAPER_WATCH_TERMS", "").strip()
-    if not raw:
-        return dict(DEFAULT_TERMS)
+    if raw:
+        terms = {}
+        for part in raw.split(","):
+            item = part.strip()
+            if not item:
+                continue
+            if ":" in item:
+                term, weight = item.rsplit(":", 1)
+                try:
+                    terms[term.strip().lower()] = float(weight)
+                except ValueError:
+                    terms[term.strip().lower()] = 1.0
+            else:
+                terms[item.lower()] = 1.0
+        return terms or dict(DEFAULT_TERMS)
 
-    terms = {}
-    for part in raw.split(","):
-        item = part.strip()
-        if not item:
+    terms = dict(DEFAULT_TERMS) if env_bool("PAPER_WATCH_INCLUDE_DEFAULT_TERMS", True) else {}
+    profile = load_lab_profile()
+    limit = max(0, env_int("PAPER_WATCH_PROFILE_TERM_LIMIT", 80))
+    for entry in (profile.get("weighted_terms") or [])[:limit]:
+        if not isinstance(entry, dict):
             continue
-        if ":" in item:
-            term, weight = item.rsplit(":", 1)
-            try:
-                terms[term.strip().lower()] = float(weight)
-            except ValueError:
-                terms[term.strip().lower()] = 1.0
-        else:
-            terms[item.lower()] = 1.0
+        term = compact_whitespace(str(entry.get("term", ""))).lower()
+        if not term:
+            continue
+        try:
+            weight = float(entry.get("weight", 1.0))
+        except (TypeError, ValueError):
+            weight = 1.0
+        terms[term] = max(terms.get(term, 0.0), weight)
     return terms or dict(DEFAULT_TERMS)
+
+
+@lru_cache(maxsize=1)
+def profile_combo_rules() -> list[dict]:
+    profile = load_lab_profile()
+    raw_rules = list(profile.get("core_themes") or []) + list(profile.get("theme_combinations") or [])
+    limit = max(0, env_int("PAPER_WATCH_PROFILE_COMBO_LIMIT", 30))
+    rules = []
+    for rule in raw_rules[:limit]:
+        if not isinstance(rule, dict):
+            continue
+        name = compact_whitespace(str(rule.get("name", "")))
+        terms_by_category = rule.get("terms_by_category") or {}
+        if not name or not isinstance(terms_by_category, dict):
+            continue
+        usable_terms = {}
+        for category in ("materials", "methods", "physics", "applications"):
+            terms = [
+                compact_whitespace(str(term)).lower()
+                for term in terms_by_category.get(category, [])
+                if compact_whitespace(str(term))
+            ]
+            if terms:
+                usable_terms[category] = list(dict.fromkeys(terms))
+        if len(usable_terms) < 2:
+            continue
+        try:
+            raw_weight = float(rule.get("weight", 1.0))
+        except (TypeError, ValueError):
+            raw_weight = 1.0
+        score_weight = raw_weight * 2.5 if raw_weight <= 1.0 else raw_weight
+        rules.append(
+            {
+                "name": name,
+                "weight": min(score_weight, env_float("PAPER_WATCH_PROFILE_COMBO_MAX_WEIGHT", 4.0)),
+                "terms_by_category": usable_terms,
+            }
+        )
+    return rules
+
+
+@lru_cache(maxsize=1)
+def profile_negative_terms() -> list[dict]:
+    profile = load_lab_profile()
+    terms = []
+    for entry in profile.get("negative_profile", {}).get("terms", []):
+        if not isinstance(entry, dict):
+            continue
+        term = compact_whitespace(str(entry.get("term", ""))).lower()
+        if not term:
+            continue
+        try:
+            weight = float(entry.get("weight", 1.0))
+        except (TypeError, ValueError):
+            weight = 1.0
+        terms.append({"term": term, "weight": weight})
+    return terms
+
+
+def score_profile_combos(text: str) -> tuple[float, list[str]]:
+    score = 0.0
+    reasons = []
+    for rule in profile_combo_rules():
+        matched_categories = 0
+        for category_terms in rule["terms_by_category"].values():
+            if any(text_has_term(text, term) for term in category_terms):
+                matched_categories += 1
+        if matched_categories < 2:
+            continue
+        score += float(rule["weight"])
+        reasons.append(rule["name"])
+
+    cap = env_float("PAPER_WATCH_PROFILE_COMBO_SCORE_CAP", 6.0)
+    return min(score, cap), reasons[:4]
 
 
 def arxiv_date_filter(lookback_days: int) -> str:
@@ -1268,9 +1378,20 @@ def score_entry(entry: dict, terms: dict[str, float]) -> tuple[float, list[str]]
     score = 0.0
     reasons = []
     for term, weight in terms.items():
-        if term in text:
+        if text_has_term(text, term):
             score += weight
             reasons.append(term)
+
+    combo_score, combo_reasons = score_profile_combos(text)
+    score += combo_score
+    reasons.extend(combo_reasons)
+
+    for item in profile_negative_terms():
+        if text_has_term(text, item["term"]):
+            score -= item["weight"]
+            reasons.append(f"penalty:{item['term']}")
+
+    score = max(0.0, score)
     return score, reasons[:8]
 
 
@@ -2234,7 +2355,7 @@ def compact_reasons(item: dict) -> str:
     reasons = item.get("reasons") or []
     if not reasons:
         return "profile match"
-    return ", ".join(reasons[:3])
+    return ", ".join(truncate(str(reason), 52) for reason in reasons[:3])
 
 
 def classification_summary(item: dict) -> str:
@@ -2280,11 +2401,8 @@ def paper_watch_translation_enabled() -> bool:
 
 @lru_cache(maxsize=1)
 def load_lab_profile_context() -> str:
-    if not LAB_PROFILE_PATH.exists():
-        return "not available"
-    try:
-        profile = json.loads(LAB_PROFILE_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    profile = load_lab_profile()
+    if not profile:
         return "not available"
 
     categories = profile.get("categories", {})
@@ -2297,8 +2415,32 @@ def load_lab_profile_context() -> str:
         "authors": "Authors",
     }
     lines = []
+    core_themes = [
+        entry.get("name", "")
+        for entry in profile.get("core_themes", [])[:5]
+        if entry.get("name")
+    ]
+    if core_themes:
+        lines.append(f"Core themes: {', '.join(core_themes)}")
+
+    hot_topics = [
+        entry.get("label", "")
+        for entry in profile.get("hot_topics", [])[:5]
+        if entry.get("label")
+    ]
+    if hot_topics:
+        lines.append(f"Active topics: {', '.join(hot_topics)}")
+
+    combinations = [
+        entry.get("name", "")
+        for entry in profile.get("theme_combinations", [])[:4]
+        if entry.get("name")
+    ]
+    if combinations:
+        lines.append(f"Common material-method-physics combinations: {'; '.join(combinations)}")
+
     for key, label in labels.items():
-        entries = categories.get(key, [])[:6]
+        entries = categories.get(key, [])[:5]
         names = [entry.get("label", "") for entry in entries if entry.get("label")]
         if names:
             lines.append(f"{label}: {', '.join(names)}")

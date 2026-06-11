@@ -81,7 +81,7 @@ Paper Watch combines source-specific fetching with lab-specific scoring.
 ```bash
 cd /volume1/docker/paperbot
 sudo ./scripts/run_paper_watch.sh --dry-run --sources arxiv --post-limit 3
-sudo ./scripts/run_paper_watch.sh --dry-run --sources rss --rss-groups nature,nature_ext --no-summary
+sudo ./scripts/run_paper_watch.sh --dry-run --sources rss --rss-groups nature_family --no-summary
 ```
 
 The default Slack output is compact:
@@ -96,13 +96,19 @@ The default Slack output is compact:
 
 ## Lab Profile
 
-The generated profile summarizes what the indexed lab corpus is about:
+The generated profile is rebuilt by the daily Zotero/RAG pipeline and overwrites
+`lab_profile.json` and `lab_profile.md`. It is both a readable summary and a
+scoring prior for Paper Watch.
 
-- material systems
-- methods and measurements
-- physics concepts
-- journals and source families
-- authors and recurring terms
+- `core_themes`: curated lab themes such as PSH in III-V quantum wells,
+  structured-light control of spin textures, and 2D exciton/valley spin dynamics
+- `hot_topics`: recently growing materials, methods, physics, or applications
+- `theme_combinations`: frequent material-method-physics combinations
+- `weighted_terms`: terms and weights consumed by Paper Watch scoring
+- `negative_profile`: peripheral topics that should reduce recommendation score
+- `categories`: material systems, methods, physics concepts, applications,
+  journals, and normalized authors
 
-It is used as a lightweight prior for Paper Watch scoring and as a human-readable
-snapshot of the current lab interest distribution.
+Paper Watch reads this profile automatically when it exists. Manual
+`PAPER_WATCH_TERMS` still works as an override, but normal production should use
+the generated profile plus the built-in default terms.

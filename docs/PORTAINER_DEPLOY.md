@@ -124,10 +124,10 @@ cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources arxiv
 Monthly journal jobs:
 
 ```bash
-cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups pr,pr_ext
-cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups nature,nature_ext
-cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups aip
-cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups nano_2d,broad_high
+cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aps_core,aps_ext_reviews,japan_physics --lookback-days 35 --post-limit 5 --report-title "Paper Watch Monthly APS/JP"
+cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nature_family,broad_high_impact --lookback-days 35 --post-limit 5 --report-title "Paper Watch Monthly Nature/High Impact"
+cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aip_family,iop_optics --lookback-days 35 --post-limit 5 --report-title "Paper Watch Monthly AIP/Optics"
+cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nano_2d_materials --lookback-days 35 --post-limit 5 --report-title "Paper Watch Monthly Nano/2D"
 ```
 
 Run these DSM tasks as `root`.
