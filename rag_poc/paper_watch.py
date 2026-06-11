@@ -2040,6 +2040,69 @@ def row_to_watch_item(
     }
 
 
+def select_rag_enrichment_candidates(
+    conn: sqlite3.Connection,
+    *,
+    lookback_days: int,
+) -> list[dict]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+    cutoff_text = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+    min_term_score = env_float("PAPER_WATCH_RAG_MIN_TERM_SCORE", 1.0)
+    candidate_limit = env_int("PAPER_WATCH_RAG_CANDIDATE_LIMIT", 30)
+    fetch_limit = max(candidate_limit * 5, candidate_limit)
+    metadata_by_source = load_lab_metadata_by_source()
+    rows = conn.execute(
+        """
+        SELECT source, external_id, title, authors_json, summary, url,
+               published_at, score, reasons_json,
+               term_score, rag_score, rag_source, rag_page_start, rag_page_end,
+               doi, dedupe_key, title_key, source_detail, journal,
+               source_group, report_group, paper_type, classification_json
+        FROM paper_watch_items
+        WHERE posted_at IS NULL
+          AND first_seen_at >= ?
+          AND term_score >= ?
+          AND (rag_score IS NULL OR rag_score <= 0)
+        ORDER BY term_score DESC, first_seen_at DESC, published_at DESC
+        LIMIT ?
+        """,
+        (cutoff_text, min_term_score, fetch_limit),
+    ).fetchall()
+    return [row_to_watch_item(row, metadata_by_source) for row in rows]
+
+
+def update_rag_scores(conn: sqlite3.Connection, items: list[dict]) -> int:
+    updated = 0
+    for item in items:
+        if float(item.get("rag_score", 0.0) or 0.0) <= 0:
+            continue
+        conn.execute(
+            """
+            UPDATE paper_watch_items
+            SET score = ?,
+                rag_score = ?,
+                rag_source = ?,
+                rag_page_start = ?,
+                rag_page_end = ?,
+                last_seen_at = ?
+            WHERE source = ?
+              AND external_id = ?
+            """,
+            (
+                item.get("score", item.get("term_score", 0.0)),
+                item.get("rag_score", 0.0),
+                item.get("rag_source") or None,
+                item.get("rag_page_start"),
+                item.get("rag_page_end"),
+                utc_now(),
+                item["source"],
+                item["external_id"],
+            ),
+        )
+        updated += 1
+    return updated
+
+
 def selected_report_groups(args: argparse.Namespace) -> set[str]:
     raw = ",".join(
         value for value in (getattr(args, "report_groups", ""), args.rss_groups) if value
@@ -2721,10 +2784,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Find and post relevant new papers.")
     parser.add_argument(
         "--mode",
-        choices=["collect", "report", "run"],
+        choices=["collect", "rag", "report", "run"],
         default=os.environ.get("PAPER_WATCH_MODE", "run"),
         help=(
             "collect stores metadata and scores without Slack posts; "
+            "rag enriches recently collected DB rows with lab RAG similarity; "
             "report posts from stored items; run fetches and posts immediately."
         ),
     )
@@ -2905,6 +2969,32 @@ def collect_mode(args: argparse.Namespace, terms: dict[str, float]) -> None:
         conn.close()
 
 
+def rag_mode(args: argparse.Namespace) -> None:
+    conn = init_db(paper_watch_db_path())
+    try:
+        candidates = select_rag_enrichment_candidates(
+            conn,
+            lookback_days=args.lookback_days,
+        )
+        if args.dry_run:
+            print(
+                "Paper Watch RAG dry-run: "
+                f"candidates={len(candidates)} db_write=false"
+            )
+            return
+
+        apply_rag_scores_from_lab_db(candidates, enabled=not args.no_rag_score)
+        updated_count = update_rag_scores(conn, candidates)
+        conn.commit()
+        print(
+            "Paper Watch RAG: "
+            f"candidates={len(candidates)} updated={updated_count} "
+            f"db={paper_watch_db_path()} rag_score={str(not args.no_rag_score).lower()}"
+        )
+    finally:
+        conn.close()
+
+
 def report_mode(args: argparse.Namespace) -> None:
     conn = init_db(paper_watch_db_path())
     try:
@@ -3021,6 +3111,8 @@ def main() -> None:
     terms = profile_terms()
     if args.mode == "collect":
         collect_mode(args, terms)
+    elif args.mode == "rag":
+        rag_mode(args)
     elif args.mode == "report":
         report_mode(args)
     else:
