@@ -11,6 +11,7 @@ from pathlib import Path
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+from slack_sdk.errors import SlackApiError
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -98,6 +99,59 @@ class RagResult:
 
 
 MAX_INLINE_SOURCES_CHARS = 6000
+MAX_BLOCK_TEXT_CHARS = 2900
+
+
+def slack_truncate(text: str, limit: int = MAX_BLOCK_TEXT_CHARS) -> str:
+    clean = text.strip()
+    if len(clean) <= limit:
+        return clean
+    return clean[: limit - 1].rstrip() + "…"
+
+
+def rag_blocks(result: RagResult) -> list[dict]:
+    clean_answer = result.answer.strip() or "LLMが空の回答を返しました。Sourcesを確認してください。"
+    clean_sources = result.sources.strip() or "No sources."
+    if len(clean_sources) > MAX_INLINE_SOURCES_CHARS:
+        clean_sources = (
+            clean_sources[:MAX_INLINE_SOURCES_CHARS].rstrip()
+            + "\n... sources truncated. Send `sources` for the full list."
+        )
+
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": ":books: *PaperBot RAG*",
+            },
+        },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f":mag: *Answer / 回答*\n{slack_truncate(clean_answer)}",
+            },
+        },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f":bookmark_tabs: *Sources / 根拠*\n```{slack_truncate(clean_sources, 2600)}```",
+            },
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f":brain: `{result.model}`  :stopwatch: `{result.duration:.2f}s`",
+                }
+            ],
+        },
+    ]
 
 
 def format_rag_message(answer: str, sources: str) -> str:
@@ -109,8 +163,9 @@ def format_rag_message(answer: str, sources: str) -> str:
             + "\n... sources truncated. Send `sources` for the full list."
         )
     return (
-        f"*Answer / 回答*\n{clean_answer}\n\n"
-        f"*Sources / 根拠*\n```{clean_sources}```"
+        f":books: *PaperBot RAG*\n\n"
+        f":mag: *Answer / 回答*\n{clean_answer}\n\n"
+        f":bookmark_tabs: *Sources / 根拠*\n```{clean_sources}```"
     )
 
 
@@ -143,7 +198,7 @@ def latest_papers(limit: int = 8) -> list[Path]:
 def command_help() -> str:
     return "\n".join(
         [
-            "*PaperBot commands / コマンド*",
+            ":robot_face: *PaperBot commands / コマンド*",
             "`help` / `ヘルプ`  Show this help / このヘルプを表示",
             "`model` / `モデル`  Show LLM and embedding settings / LLM・embedding設定を表示",
             "`status` / `状態`  Show DB counts and Ollama health / DB件数とOllama疎通を表示",
@@ -163,7 +218,7 @@ def command_help() -> str:
 def command_model() -> str:
     return "\n".join(
         [
-            "*Current model settings / 現在のモデル設定*",
+            ":brain: *Current model settings / 現在のモデル設定*",
             f"`OLLAMA_BASE_URL`: `{os.environ.get('OLLAMA_BASE_URL', 'default')}`",
             f"`OLLAMA_CHAT_MODEL`: `{CHAT_MODEL}`",
             f"`OLLAMA_EMBED_MODEL`: `{EMBED_MODEL}`",
@@ -213,7 +268,7 @@ def ollama_status() -> str:
 
 
 def command_status() -> str:
-    lines = ["*PaperBot status / 状態*"]
+    lines = [":satellite: *PaperBot status / 状態*"]
     lines.append(f"Ollama: {ollama_status()}")
 
     if not INDEX_DB_PATH.exists():
@@ -287,7 +342,7 @@ def command_sources(channel: str, user: str) -> str:
             "まだこのDM/チャンネルでは回答履歴がありません。先に質問を送ってください。"
         )
     return (
-        f"*Last question / 直前の質問*\n{result.question}\n\n"
+        f":bookmark_tabs: *Last question / 直前の質問*\n{result.question}\n\n"
         f"*Model*: `{result.model}` / `{result.duration:.2f}s`\n\n"
         f"*Sources / 根拠*\n```{result.sources}```"
     )
@@ -300,7 +355,7 @@ def command_recent() -> str:
             "No PDFs found under `rag_poc/papers` yet.\n"
             "NAS上の `rag_poc/papers` にPDFがまだ見つかりません。"
         )
-    lines = ["*Recent PDFs / 最近のPDF*"]
+    lines = [":page_facing_up: *Recent PDFs / 最近のPDF*"]
     for i, path in enumerate(papers, start=1):
         source = path.relative_to(PAPERS_DIR).as_posix()
         lines.append(f"{i}. {source}")
@@ -327,14 +382,28 @@ def handle_command(text: str, channel: str, user: str) -> str | None:
     return None
 
 
-def post_message(client, channel: str, text: str, thread_ts: str | None = None) -> None:
+def post_message(
+    client,
+    channel: str,
+    text: str,
+    thread_ts: str | None = None,
+    blocks: list[dict] | None = None,
+) -> None:
     payload = {
         "channel": channel,
         "text": text,
     }
+    if blocks:
+        payload["blocks"] = blocks
     if thread_ts:
         payload["thread_ts"] = thread_ts
-    client.chat_postMessage(**payload)
+    try:
+        client.chat_postMessage(**payload)
+    except SlackApiError:
+        if not blocks:
+            raise
+        payload.pop("blocks", None)
+        client.chat_postMessage(**payload)
 
 
 def reply_with_rag(
@@ -358,8 +427,9 @@ def reply_with_rag(
         post_message(client, channel, command_response, thread_ts)
         return
 
-    post_message(client, channel, "Searching PDFs... / PDFを検索しています...", thread_ts)
+    post_message(client, channel, ":mag: Searching PDFs... / PDFを検索しています...", thread_ts)
 
+    blocks = None
     try:
         result = ask_rag(question)
     except Exception as e:
@@ -392,8 +462,15 @@ def reply_with_rag(
             result.sources,
         )
         answer = result.message
+        blocks = rag_blocks(result)
 
-    post_message(client, channel, answer[:39000], thread_ts)
+    post_message(
+        client,
+        channel,
+        answer[:39000],
+        thread_ts,
+        blocks=blocks,
+    )
 
 
 @app.event("app_mention")
