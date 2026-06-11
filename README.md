@@ -114,15 +114,14 @@ These are the intended Synology DSM Task Scheduler entries. The tasks run as
 | `Paperbot` | Every day 08:00 | Zotero metadata/PDF sync, incremental RAG ingest, profile rebuild, Slack status notification | `cd /volume1/docker/paperbot && ./scripts/sync_zotero_pipeline.sh` |
 | `Paperbot-collect` | Every day 08:30 | Collect broad paper metadata, deduplicate, score, and store in SQLite without Slack posts | `cd /volume1/docker/paperbot && ./scripts/collect_paper_watch.sh --lookback-days 7` |
 | `Paperbot-arXiv-report` | Every Monday 09:00 | Weekly arXiv report from stored metadata | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope arxiv --lookback-days 7 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Weekly arXiv"` |
-| `Paperbot-PR-report` | First Monday 09:30 | Monthly APS Physical Review report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups pr,pr_ext --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly PR"` |
-| `Paperbot-Nature-report` | Second Monday 09:30 | Monthly Nature-family report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups nature,nature_ext --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nature"` |
-| `Paperbot-AIP-report` | Third Monday 09:30 | Monthly AIP / APL / JAP report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups aip --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly AIP"` |
-| `Paperbot-Japan-report` | Third Monday 10:00 | Monthly Japanese/applied physics report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups japan,iop_semiconductor,optics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Japan/Applied Physics"` |
-| `Paperbot-Nano-report` | Fourth Monday 09:30 | Monthly nano, 2D materials, and broad high-impact report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups nano_2d,broad_high --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nano/High Impact"` |
+| `Paperbot-Mon-report` | First Monday 09:30 | Monthly spin-orbit / semiconductor / Japan-applied report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups spin_orbit_semiconductors,japan_applied_physics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Spin/JP"` |
+| `Paperbot-Wed-report` | First Wednesday 09:30 | Monthly 2D materials / optical spectroscopy report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups quantum_2d_materials,optical_spectroscopy_photonics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly 2D/Optics"` |
+| `Paperbot-Fri-report` | First Friday 09:30 | Monthly magnetism / devices / high-impact report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups magnetism_magnonics,devices_applied,high_impact_general,reviews_perspectives --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Mag/Device"` |
 
 Paper Watch does not send immediate alerts in the production schedule. Daily
-collection stores metadata and scores only; Slack posts are generated from the
-stored database by weekly and monthly report tasks.
+collection stores metadata, structured lab tags, report categories, and scores
+in a dedicated `paper_watch.sqlite3` database. Slack posts are generated from
+that stored database by weekly and monthly report tasks.
 
 ## Deployment
 
@@ -207,11 +206,13 @@ Useful bot commands:
 Paper Watch is split into collection and reporting.
 
 Daily collection fetches metadata only, deduplicates by DOI or normalized title,
-scores papers with the lab profile, and stores the result in SQLite. It does not
-post to Slack. Weekly and monthly report tasks then select the highest-scoring
-stored papers and post compact Slack messages one paper at a time. Each selected
-paper is sent with a separate `chat.postMessage` call; an eight-paper report
-produces eight Slack messages, not one combined digest.
+classifies papers into lab-oriented JSON tags, scores papers with the lab
+profile and optional RAG similarity, and stores the result in
+`rag_poc/index/paper_watch.sqlite3`. It does not post to Slack. Weekly and
+monthly report tasks then select the highest-scoring stored papers and post
+compact Slack messages one paper at a time. Each selected paper is sent with a
+separate `chat.postMessage` call; an eight-paper report produces eight Slack
+messages, not one combined digest.
 
 Scoring inputs:
 
@@ -220,6 +221,16 @@ Scoring inputs:
 - optional candidate abstract embedding similarity to the SQLite RAG index
 - journal/source group
 - duplicate suppression via DOI and normalized title
+
+Collected metadata and classifications:
+
+- source group: where the paper came from, such as `pr`, `aip`, `japan`, or
+  `nano_2d`
+- report group: one of the eight monthly report buckets below
+- paper type: `experiment`, `theory/simulation`, `review`, or `article`
+- lab tags: `materials`, `methods`, `physics`, and `applications`
+- expiry time: old paper-watch metadata is deleted after
+  `PAPER_WATCH_RETENTION_DAYS`
 
 Default source groups:
 
@@ -236,6 +247,19 @@ Default source groups:
 | `optics` | Laser & Photonics Reviews, Optics Letters |
 | `nano_2d` | Nano Letters, ACS Nano, ACS Photonics, 2D Materials, npj 2D Materials and Applications |
 | `broad_high` | Advanced Science, Advanced Materials, Science Advances, PNAS, Cell Reports Physical Science |
+
+Refined report groups:
+
+| Report group | Purpose |
+| --- | --- |
+| `spin_orbit_semiconductors` | PSH, Rashba/Dresselhaus, 2DEG, spin diffusion, III-V quantum wells |
+| `optical_spectroscopy_photonics` | TRKR, Kerr, transient grating, PL, excitons, structured light |
+| `quantum_2d_materials` | TMDs, CrSBr, GaTe/GaSe, Janus materials, van der Waals systems |
+| `magnetism_magnonics` | magnets, spin waves, magnons, spin Hall, spin torque, altermagnets |
+| `devices_applied` | devices, switching, interfaces, heterostructures, applied materials |
+| `high_impact_general` | broad Nature/Science/Advanced/PNAS style papers |
+| `japan_applied_physics` | JJAP, APEX, JPSJ, STAM, NPG Asia Materials |
+| `reviews_perspectives` | reviews, perspectives, roadmaps, tutorials, outlook papers |
 
 Access policy:
 
@@ -263,7 +287,7 @@ sudo ./scripts/report_paper_watch.sh --dry-run --report-scope arxiv --lookback-d
 Dry run a monthly journal report from stored metadata:
 
 ```bash
-sudo ./scripts/report_paper_watch.sh --dry-run --report-scope journals --rss-groups nature,nature_ext --lookback-days 35 --post-limit 3
+sudo ./scripts/report_paper_watch.sh --dry-run --report-scope journals --report-groups quantum_2d_materials,optical_spectroscopy_photonics --lookback-days 35 --post-limit 3
 ```
 
 Immediate fetch-and-post mode is retained for manual debugging only:
@@ -323,6 +347,7 @@ Important files on the NAS:
 | `/volume1/docker/paperbot/.env` | secrets and runtime configuration |
 | `/volume1/docker/paperbot/rag_poc/papers/zotero/` | local Zotero PDF archive |
 | `/volume1/docker/paperbot/rag_poc/index/chunks.sqlite3` | metadata, chunks, embeddings, seen papers |
+| `/volume1/docker/paperbot/rag_poc/index/paper_watch.sqlite3` | collected external paper metadata, classifications, scores, and report state |
 | `/volume1/docker/paperbot/rag_poc/index/lab_profile.md` | generated lab interest profile |
 | `/volume1/docker/paperbot/logs/sync_zotero_pipeline.log` | scheduled Zotero/RAG pipeline log |
 | `/volume1/docker/paperbot/logs/paper_watch.log` | scheduled Paper Watch log |

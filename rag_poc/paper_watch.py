@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = ROOT.parent
 INDEX_DIR = ROOT / "index"
 INDEX_DB_PATH = INDEX_DIR / "chunks.sqlite3"
+DEFAULT_PAPER_WATCH_DB_PATH = INDEX_DIR / "paper_watch.sqlite3"
 LAB_PROFILE_PATH = INDEX_DIR / "lab_profile.json"
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
@@ -324,6 +325,104 @@ DEFAULT_TERMS = {
     "valley spin": 4,
 }
 
+REPORT_GROUPS = {
+    "spin_orbit_semiconductors": "Spin-orbit semiconductors",
+    "optical_spectroscopy_photonics": "Optical spectroscopy and photonics",
+    "quantum_2d_materials": "Quantum and 2D materials",
+    "magnetism_magnonics": "Magnetism and magnonics",
+    "devices_applied": "Devices and applied materials",
+    "high_impact_general": "High-impact general physics",
+    "japan_applied_physics": "Japan/applied physics journals",
+    "reviews_perspectives": "Reviews and perspectives",
+}
+
+SOURCE_GROUP_REPORT_DEFAULTS = {
+    "arxiv": "spin_orbit_semiconductors",
+    "pr": "spin_orbit_semiconductors",
+    "pr_ext": "high_impact_general",
+    "nature": "high_impact_general",
+    "nature_ext": "high_impact_general",
+    "aip": "devices_applied",
+    "japan": "japan_applied_physics",
+    "iop_semiconductor": "spin_orbit_semiconductors",
+    "optics": "optical_spectroscopy_photonics",
+    "nano_2d": "quantum_2d_materials",
+    "broad_high": "high_impact_general",
+}
+
+REPORT_GROUP_KEYWORDS = {
+    "spin_orbit_semiconductors": [
+        "persistent spin helix", "spin helix", "rashba", "dresselhaus",
+        "spin-orbit", "spin orbit", "2deg", "two-dimensional electron gas",
+        "spin diffusion", "spin lifetime", "gaas", "ingaas", "quantum well",
+    ],
+    "optical_spectroscopy_photonics": [
+        "time-resolved kerr", "trkr", "kerr rotation", "transient grating",
+        "photoluminescence", "optical spectroscopy", "photonics", "laser",
+        "spatial light modulator", "structured light", "exciton",
+    ],
+    "quantum_2d_materials": [
+        "two-dimensional", "2d material", "monolayer", "van der waals",
+        "wse2", "ws2", "mos2", "crsbr", "gallium telluride", "janus",
+    ],
+    "magnetism_magnonics": [
+        "magnet", "magnetic", "ferromagnet", "antiferromagnet",
+        "magnon", "magnonic", "skyrmion", "spin wave", "spin torque",
+        "spin hall", "altermagnet",
+    ],
+    "devices_applied": [
+        "device", "transistor", "memory", "logic", "switching",
+        "sensor", "application", "heterostructure", "interface",
+        "thin film", "superlattice",
+    ],
+    "high_impact_general": [
+        "nature", "science", "advanced", "pnas", "cell reports",
+    ],
+    "japan_applied_physics": [
+        "japanese journal of applied physics", "applied physics express",
+        "journal of the physical society of japan", "science and technology of advanced materials",
+        "npg asia materials",
+    ],
+    "reviews_perspectives": [
+        "review", "reviews", "perspective", "roadmap", "tutorial",
+        "progress", "outlook",
+    ],
+}
+
+TAG_RULES = {
+    "materials": {
+        "GaAs": ["gaas", "algaas"],
+        "InGaAs": ["ingaas", "inalas", "inp"],
+        "GaTe/GaSe": ["gallium telluride", "gallium selenide", "layered gate", "layered gase"],
+        "TMD": ["wse2", "ws2", "mos2", "mose2", "transition metal dichalcogenide"],
+        "CrSBr": ["crsbr"],
+        "perovskite": ["perovskite"],
+        "magnetic metals": ["cofe", "pt/co", "fept", "ta thin film"],
+    },
+    "methods": {
+        "TRKR": ["trkr", "time-resolved kerr", "kerr rotation"],
+        "transient spin grating": ["transient spin grating", "spin grating"],
+        "photoluminescence": ["photoluminescence", "pl spectrum", "pl spectroscopy"],
+        "transport": ["transport", "magnetoresistance", "hall", "mobility"],
+        "DFT/theory": ["density functional", "dft", "first-principles", "theory", "calculation"],
+        "structured light": ["structured light", "spatial light modulator", "vortex beam"],
+    },
+    "physics": {
+        "PSH": ["persistent spin helix", "spin helix"],
+        "Rashba/Dresselhaus": ["rashba", "dresselhaus"],
+        "spin diffusion": ["spin diffusion", "spin lifetime", "spin relaxation"],
+        "spin-orbit torque": ["spin orbit torque", "spin-orbit torque", "spin hall"],
+        "exciton/valley spin": ["exciton spin", "valley", "trion", "biexciton"],
+        "magnon/spin wave": ["magnon", "spin wave", "magnonic"],
+    },
+    "applications": {
+        "spintronics": ["spintronics", "spin transistor", "spin logic"],
+        "photonics": ["photonics", "optical device", "nonlinear optical"],
+        "memory/logic": ["memory", "logic", "switching", "mram"],
+        "quantum materials": ["quantum material", "topological", "2d material"],
+    },
+}
+
 
 def load_env_file(path: Path) -> None:
     if not path.exists():
@@ -368,6 +467,13 @@ def env_bool(name: str, default: bool) -> bool:
     if not value:
         return default
     return value in {"1", "true", "yes", "on"}
+
+
+def paper_watch_db_path() -> Path:
+    configured = os.environ.get("PAPER_WATCH_DB_PATH", "").strip()
+    if configured:
+        return Path(configured)
+    return DEFAULT_PAPER_WATCH_DB_PATH
 
 
 def utc_now() -> str:
@@ -496,6 +602,7 @@ def crossref_author_names(item: dict) -> list[str]:
 
 def init_db(path: Path) -> sqlite3.Connection:
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.execute(
         """
@@ -520,6 +627,11 @@ def init_db(path: Path) -> sqlite3.Connection:
             title_key TEXT,
             source_detail TEXT,
             journal TEXT,
+            source_group TEXT,
+            report_group TEXT,
+            paper_type TEXT,
+            classification_json TEXT,
+            expires_at TEXT,
             first_seen_at TEXT NOT NULL,
             last_seen_at TEXT NOT NULL,
             posted_at TEXT,
@@ -538,6 +650,18 @@ def init_db(path: Path) -> sqlite3.Connection:
         """
         CREATE INDEX IF NOT EXISTS idx_paper_watch_first_seen_score
         ON paper_watch_items(first_seen_at, posted_at, score)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_paper_watch_report_group
+        ON paper_watch_items(report_group, posted_at, score, first_seen_at)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_paper_watch_expires
+        ON paper_watch_items(expires_at)
         """
     )
     return conn
@@ -559,6 +683,11 @@ def ensure_paper_watch_columns(conn: sqlite3.Connection) -> None:
         "title_key": "TEXT",
         "source_detail": "TEXT",
         "journal": "TEXT",
+        "source_group": "TEXT",
+        "report_group": "TEXT",
+        "paper_type": "TEXT",
+        "classification_json": "TEXT",
+        "expires_at": "TEXT",
     }
     for name, column_type in columns.items():
         if name not in existing:
@@ -1176,6 +1305,16 @@ def load_metadata_by_source(conn: sqlite3.Connection) -> dict[str, dict]:
     return metadata
 
 
+def load_lab_metadata_by_source() -> dict[str, dict]:
+    if not INDEX_DB_PATH.exists():
+        return {}
+    try:
+        with sqlite3.connect(INDEX_DB_PATH) as conn:
+            return load_metadata_by_source(conn)
+    except sqlite3.Error:
+        return {}
+
+
 def format_rag_source_label(source: str, metadata: dict | None = None) -> str:
     metadata = metadata or {}
     title = metadata.get("title", "")
@@ -1204,7 +1343,7 @@ def load_rag_reference_chunks(
     if max_chunks <= 0 or chunks_per_source <= 0:
         return []
 
-    metadata_by_source = load_metadata_by_source(conn)
+    metadata_by_source = load_lab_metadata_by_source()
     try:
         rows = conn.execute(
             """
@@ -1325,6 +1464,35 @@ def apply_rag_scores(
             entry["rag_page_end"] = nearest["page_end"]
 
 
+def apply_rag_scores_from_lab_db(entries: list[dict], *, enabled: bool) -> None:
+    if not enabled:
+        with sqlite3.connect(":memory:") as conn:
+            apply_rag_scores(entries, conn, enabled=False)
+        return
+    if not INDEX_DB_PATH.exists():
+        print("Paper Watch RAG score skipped: lab RAG DB not found.")
+        with sqlite3.connect(":memory:") as conn:
+            apply_rag_scores(entries, conn, enabled=False)
+        return
+    with sqlite3.connect(INDEX_DB_PATH) as conn:
+        apply_rag_scores(entries, conn, enabled=True)
+
+
+def cleanup_expired_items(conn: sqlite3.Connection) -> int:
+    now = utc_now()
+    before = conn.total_changes
+    conn.execute(
+        """
+        DELETE FROM paper_watch_items
+        WHERE expires_at IS NOT NULL
+          AND expires_at != ''
+          AND expires_at < ?
+        """,
+        (now,),
+    )
+    return conn.total_changes - before
+
+
 def upsert_entry(conn: sqlite3.Connection, entry: dict) -> bool:
     now = utc_now()
     existing = conn.execute(
@@ -1342,8 +1510,9 @@ def upsert_entry(conn: sqlite3.Connection, entry: dict) -> bool:
             published_at, updated_at, score, reasons_json,
             term_score, rag_score, rag_source, rag_page_start, rag_page_end,
             doi, dedupe_key, title_key, source_detail, journal,
+            source_group, report_group, paper_type, classification_json, expires_at,
             first_seen_at, last_seen_at, posted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
         ON CONFLICT(source, external_id) DO UPDATE SET
             title = excluded.title,
             authors_json = excluded.authors_json,
@@ -1363,6 +1532,11 @@ def upsert_entry(conn: sqlite3.Connection, entry: dict) -> bool:
             title_key = excluded.title_key,
             source_detail = excluded.source_detail,
             journal = excluded.journal,
+            source_group = excluded.source_group,
+            report_group = excluded.report_group,
+            paper_type = excluded.paper_type,
+            classification_json = excluded.classification_json,
+            expires_at = excluded.expires_at,
             last_seen_at = excluded.last_seen_at
         """,
         (
@@ -1386,6 +1560,11 @@ def upsert_entry(conn: sqlite3.Connection, entry: dict) -> bool:
             entry.get("title_key") or entry_title_key(entry),
             entry.get("source_detail") or None,
             entry.get("journal") or None,
+            entry.get("source_group") or None,
+            entry.get("report_group") or None,
+            entry.get("paper_type") or None,
+            entry.get("classification_json") or json.dumps(entry.get("classification", {}), ensure_ascii=False),
+            entry.get("expires_at") or None,
             now,
             now,
         ),
@@ -1411,14 +1590,15 @@ def select_candidates(
         ["(candidate.source = ? AND candidate.external_id = ?)"] * len(current_keys)
     )
     current_params = [value for key in current_keys for value in key]
-    metadata_by_source = load_metadata_by_source(conn)
+    metadata_by_source = load_lab_metadata_by_source()
     fetch_limit = max(limit * 5, limit)
     rows = conn.execute(
         f"""
         SELECT source, external_id, title, authors_json, summary, url,
                published_at, score, reasons_json,
                term_score, rag_score, rag_source, rag_page_start, rag_page_end,
-               doi, dedupe_key, title_key, source_detail, journal
+               doi, dedupe_key, title_key, source_detail, journal,
+               source_group, report_group, paper_type, classification_json
         FROM paper_watch_items AS candidate
         WHERE candidate.posted_at IS NULL
           AND candidate.score >= ?
@@ -1482,6 +1662,10 @@ def select_candidates(
                 "title_key": title_key,
                 "source_detail": row[17] or "",
                 "journal": row[18] or "",
+                "source_group": row[19] or "",
+                "report_group": row[20] or "",
+                "paper_type": row[21] or "",
+                "classification": json.loads(row[22] or "{}"),
             }
         )
         if len(items) >= limit:
@@ -1519,8 +1703,207 @@ def item_group(item: dict) -> str:
     source_detail = item.get("source_detail", "")
     if source_detail in id_to_group:
         return id_to_group[source_detail]
+    if item.get("source") == "arxiv":
+        return "arxiv"
     journal_key = normalize_title_for_dedupe(item.get("journal", ""))
     return journal_to_group.get(journal_key, "")
+
+
+def item_text_for_classification(item: dict) -> str:
+    return " ".join(
+        [
+            item.get("title", ""),
+            item.get("summary", ""),
+            item.get("journal", ""),
+            " ".join(item.get("authors", [])[:8]),
+        ]
+    ).lower()
+
+
+def matched_tag_labels(text: str, rules: dict[str, list[str]]) -> list[str]:
+    labels = []
+    for label, terms in rules.items():
+        if any(term.lower() in text for term in terms):
+            labels.append(label)
+    return labels
+
+
+def report_group_scores(text: str) -> dict[str, float]:
+    scores = {key: 0.0 for key in REPORT_GROUPS}
+    for group, terms in REPORT_GROUP_KEYWORDS.items():
+        for term in terms:
+            if term.lower() in text:
+                scores[group] = scores.get(group, 0.0) + 1.0
+    return scores
+
+
+def guess_paper_type(text: str) -> str:
+    if any(term in text for term in ("review", "perspective", "roadmap", "outlook", "tutorial")):
+        return "review"
+    if any(term in text for term in ("first-principles", "density functional", "dft", "calculation", "theory")):
+        return "theory/simulation"
+    if any(term in text for term in ("measurement", "measured", "observed", "imaging", "spectroscopy", "experiment")):
+        return "experiment"
+    return "article"
+
+
+def classify_entry(entry: dict) -> None:
+    text = item_text_for_classification(entry)
+    source_group = item_group(entry)
+    scores = report_group_scores(text)
+    if source_group in SOURCE_GROUP_REPORT_DEFAULTS:
+        scores[SOURCE_GROUP_REPORT_DEFAULTS[source_group]] = (
+            scores.get(SOURCE_GROUP_REPORT_DEFAULTS[source_group], 0.0) + 0.75
+        )
+    if source_group == "japan":
+        scores["japan_applied_physics"] = scores.get("japan_applied_physics", 0.0) + 1.5
+
+    report_group = max(scores, key=lambda group: scores[group])
+    if scores.get(report_group, 0.0) <= 0:
+        report_group = SOURCE_GROUP_REPORT_DEFAULTS.get(source_group, "devices_applied")
+
+    classification = {
+        "source_group": source_group or entry.get("source", ""),
+        "report_group": report_group,
+        "report_group_label": REPORT_GROUPS.get(report_group, report_group),
+        "paper_type": guess_paper_type(text),
+        "materials": matched_tag_labels(text, TAG_RULES["materials"]),
+        "methods": matched_tag_labels(text, TAG_RULES["methods"]),
+        "physics": matched_tag_labels(text, TAG_RULES["physics"]),
+        "applications": matched_tag_labels(text, TAG_RULES["applications"]),
+        "matched_report_scores": {
+            key: round(value, 2) for key, value in scores.items() if value > 0
+        },
+        "classifier": "rules-v1",
+    }
+    retention_days = max(1, env_int("PAPER_WATCH_RETENTION_DAYS", 180))
+    expires_at = datetime.now(timezone.utc) + timedelta(days=retention_days)
+
+    entry["source_group"] = classification["source_group"]
+    entry["report_group"] = report_group
+    entry["paper_type"] = classification["paper_type"]
+    entry["classification"] = classification
+    entry["classification_json"] = json.dumps(classification, ensure_ascii=False)
+    entry["expires_at"] = expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def classify_entries(entries: list[dict]) -> None:
+    for entry in entries:
+        classify_entry(entry)
+
+
+def classification_model() -> str:
+    return os.environ.get(
+        "PAPER_WATCH_CLASSIFICATION_MODEL",
+        os.environ.get("PAPERBOT_TRANSLATION_MODEL", os.environ.get("OLLAMA_CHAT_MODEL", "")),
+    ).strip()
+
+
+def extract_json_object(text: str) -> dict | None:
+    cleaned = re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL | re.IGNORECASE)
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        value = json.loads(cleaned[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def build_classification_prompt(entry: dict) -> str:
+    allowed_groups = ", ".join(REPORT_GROUPS)
+    return f"""Classify this physics/materials-science paper for a lab paper-watch database.
+Return only compact JSON. Do not include markdown.
+
+Allowed report_group values:
+{allowed_groups}
+
+JSON schema:
+{{
+  "report_group": "one allowed value",
+  "paper_type": "experiment | theory/simulation | review | article",
+  "materials": ["short labels"],
+  "methods": ["short labels"],
+  "physics": ["short labels"],
+  "applications": ["short labels"],
+  "reason": "one short English sentence"
+}}
+
+Title:
+{entry.get('title', '')}
+
+Journal:
+{entry.get('journal', '')}
+
+Authors:
+{compact_authors(entry.get('authors', []))}
+
+Abstract:
+{truncate(entry.get('summary', ''), 1800)}
+"""
+
+
+def refine_classification_with_llm(entry: dict) -> bool:
+    model = classification_model()
+    if not model:
+        return False
+    try:
+        raw = generate(build_classification_prompt(entry), model, timeout=120)
+    except OllamaError as exc:
+        print(f"Paper Watch classification failed for {entry['external_id']}: {exc}", file=sys.stderr)
+        return False
+    result = extract_json_object(raw)
+    if not result:
+        return False
+
+    classification = dict(entry.get("classification") or {})
+    report_group = str(result.get("report_group", "")).strip()
+    if report_group in REPORT_GROUPS:
+        classification["report_group"] = report_group
+        classification["report_group_label"] = REPORT_GROUPS[report_group]
+        entry["report_group"] = report_group
+
+    paper_type = str(result.get("paper_type", "")).strip()
+    if paper_type:
+        classification["paper_type"] = paper_type
+        entry["paper_type"] = paper_type
+
+    for key in ("materials", "methods", "physics", "applications"):
+        values = result.get(key)
+        if isinstance(values, list):
+            classification[key] = [compact_whitespace(str(value)) for value in values if str(value).strip()][:8]
+
+    reason = compact_whitespace(str(result.get("reason", "")))
+    if reason:
+        classification["llm_reason"] = reason
+    classification["classifier"] = "rules-v1+llm"
+    entry["classification"] = classification
+    entry["classification_json"] = json.dumps(classification, ensure_ascii=False)
+    return True
+
+
+def refine_classifications_with_llm(entries: list[dict]) -> int:
+    if not env_bool("PAPER_WATCH_CLASSIFY_WITH_LLM", False):
+        return 0
+    limit = max(0, env_int("PAPER_WATCH_CLASSIFY_LLM_LIMIT", 30))
+    min_score = env_float("PAPER_WATCH_CLASSIFY_LLM_MIN_SCORE", 1.0)
+    if limit <= 0:
+        return 0
+    candidates = [
+        entry for entry in entries
+        if float(entry.get("term_score", entry.get("score", 0.0))) >= min_score
+    ]
+    candidates.sort(
+        key=lambda item: (item.get("term_score", 0.0), item["published_at"]),
+        reverse=True,
+    )
+    refined = 0
+    for entry in candidates[:limit]:
+        if refine_classification_with_llm(entry):
+            refined += 1
+    return refined
 
 
 def row_to_watch_item(
@@ -1530,6 +1913,12 @@ def row_to_watch_item(
     rag_source = row[11] or ""
     dedupe_key = row[15] or ""
     title_key = row[16] or ""
+    classification = {}
+    if len(row) > 22 and row[22]:
+        try:
+            classification = json.loads(row[22])
+        except json.JSONDecodeError:
+            classification = {}
     return {
         "source": row[0],
         "external_id": row[1],
@@ -1554,11 +1943,18 @@ def row_to_watch_item(
         "title_key": title_key,
         "source_detail": row[17] or "",
         "journal": row[18] or "",
+        "source_group": row[19] if len(row) > 19 and row[19] else "",
+        "report_group": row[20] if len(row) > 20 and row[20] else "",
+        "paper_type": row[21] if len(row) > 21 and row[21] else "",
+        "classification": classification,
     }
 
 
 def selected_report_groups(args: argparse.Namespace) -> set[str]:
-    return {group.strip().lower() for group in args.rss_groups.split(",") if group.strip()}
+    raw = ",".join(
+        value for value in (getattr(args, "report_groups", ""), args.rss_groups) if value
+    )
+    return {group.strip().lower() for group in raw.split(",") if group.strip()}
 
 
 def report_scope_match(item: dict, scope: str, selected_groups: set[str]) -> bool:
@@ -1571,7 +1967,7 @@ def report_scope_match(item: dict, scope: str, selected_groups: set[str]) -> boo
             return False
         if not selected_groups:
             return True
-        return item_group(item) in selected_groups
+        return item.get("report_group") in selected_groups or item_group(item) in selected_groups
     return True
 
 
@@ -1587,13 +1983,14 @@ def select_report_candidates(
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     cutoff_text = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
     fetch_limit = max(limit * 25, limit)
-    metadata_by_source = load_metadata_by_source(conn)
+    metadata_by_source = load_lab_metadata_by_source()
     rows = conn.execute(
         """
         SELECT source, external_id, title, authors_json, summary, url,
                published_at, score, reasons_json,
                term_score, rag_score, rag_source, rag_page_start, rag_page_end,
-               doi, dedupe_key, title_key, source_detail, journal
+               doi, dedupe_key, title_key, source_detail, journal,
+               source_group, report_group, paper_type, classification_json
         FROM paper_watch_items AS candidate
         WHERE candidate.posted_at IS NULL
           AND candidate.score >= ?
@@ -1685,6 +2082,19 @@ def compact_reasons(item: dict) -> str:
     if not reasons:
         return "profile match"
     return ", ".join(reasons[:3])
+
+
+def classification_summary(item: dict) -> str:
+    classification = item.get("classification") or {}
+    report_group = item.get("report_group") or classification.get("report_group", "")
+    report_label = REPORT_GROUPS.get(report_group, report_group)
+    paper_type = item.get("paper_type") or classification.get("paper_type", "")
+    tags = []
+    for key in ("materials", "methods", "physics", "applications"):
+        tags.extend(classification.get(key) or [])
+    tag_text = ", ".join(dict.fromkeys(tags[:5]))
+    parts = [part for part in (report_label, paper_type, tag_text) if part]
+    return " / ".join(parts) if parts else "unclassified"
 
 
 def nearest_pdf_label(item: dict) -> str:
@@ -1944,6 +2354,7 @@ def build_item_message(
         f":newspaper: *{label}*  `[{grade}] {source}`",
         f"*{item['title']}*",
         compact_authors(item["authors"]),
+        f":bookmark_tabs: class: {classification_summary(item)}",
         f":dart: match: {reasons}",
     ]
 
@@ -1988,6 +2399,7 @@ def build_item_blocks(
     published = item.get("published_at") or ""
     source_id = slack_escape(f"{item['source']}:{item['external_id']}")
     label = slack_escape(report_label(item))
+    class_text = slack_escape(classification_summary(item))
 
     blocks: list[dict] = [
         {
@@ -2007,8 +2419,10 @@ def build_item_blocks(
         {
             "type": "section",
             "fields": [
+                {"type": "mrkdwn", "text": slack_block_text(f":bookmark_tabs: *Class*\n{class_text}", 1900)},
                 {"type": "mrkdwn", "text": slack_block_text(f":dart: *Match*\n{reasons}", 1900)},
                 {"type": "mrkdwn", "text": slack_block_text(f":bar_chart: *Score*\n`{score_text}`", 1900)},
+                {"type": "mrkdwn", "text": slack_block_text(f":calendar: *Seen*\n`{published}`", 1900)},
             ],
         },
     ]
@@ -2232,6 +2646,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lookback-days", type=int, default=env_int("PAPER_WATCH_LOOKBACK_DAYS", 14))
     parser.add_argument("--sources", default="", help="Comma-separated sources, e.g. arxiv,crossref,rss.")
     parser.add_argument("--rss-groups", default="", help="Comma-separated RSS groups, e.g. pr,nature,aip.")
+    parser.add_argument(
+        "--report-groups",
+        default=os.environ.get("PAPER_WATCH_REPORT_GROUPS", ""),
+        help=(
+            "Comma-separated refined report groups, e.g. "
+            "spin_orbit_semiconductors,quantum_2d_materials."
+        ),
+    )
     parser.add_argument("--no-summary", action="store_true", help="Skip LLM-generated bilingual intros.")
     parser.add_argument("--include-abstract", action="store_true", help="Include abstracts in Slack output.")
     parser.add_argument("--verbose-message", action="store_true", help="Include profile and score details in Slack output.")
@@ -2356,6 +2778,7 @@ def apply_report_label(items: list[dict], label: str) -> None:
 
 def collect_mode(args: argparse.Namespace, terms: dict[str, float]) -> None:
     entries = fetch_and_score_entries(args, terms)
+    classify_entries(entries)
     if args.dry_run:
         print(
             "Paper Watch collect dry-run: "
@@ -2363,26 +2786,30 @@ def collect_mode(args: argparse.Namespace, terms: dict[str, float]) -> None:
         )
         return
 
-    conn = init_db(INDEX_DB_PATH)
+    conn = init_db(paper_watch_db_path())
     try:
+        refined_count = refine_classifications_with_llm(entries)
         use_rag_score = collection_use_rag_score(args)
-        apply_rag_scores(entries, conn, enabled=use_rag_score)
+        apply_rag_scores_from_lab_db(entries, enabled=use_rag_score)
         new_count = 0
         for entry in entries:
             if upsert_entry(conn, entry):
                 new_count += 1
+        deleted_count = cleanup_expired_items(conn)
         conn.commit()
         print(
             "Paper Watch collect: "
             f"fetched={len(entries)} new_seen={new_count} "
-            f"mode=metadata-only rag_score={str(use_rag_score).lower()}"
+            f"llm_classified={refined_count} "
+            f"expired_deleted={deleted_count} "
+            f"db={paper_watch_db_path()} rag_score={str(use_rag_score).lower()}"
         )
     finally:
         conn.close()
 
 
 def report_mode(args: argparse.Namespace) -> None:
-    conn = init_db(INDEX_DB_PATH)
+    conn = init_db(paper_watch_db_path())
     try:
         candidates = select_report_candidates(
             conn,
@@ -2443,10 +2870,12 @@ def report_mode(args: argparse.Namespace) -> None:
 
 def run_mode(args: argparse.Namespace, terms: dict[str, float]) -> None:
     entries = fetch_and_score_entries(args, terms)
-    conn = init_db(INDEX_DB_PATH)
+    classify_entries(entries)
+    conn = init_db(paper_watch_db_path())
     try:
+        refine_classifications_with_llm(entries)
         use_rag_score = collection_use_rag_score(args)
-        apply_rag_scores(entries, conn, enabled=use_rag_score)
+        apply_rag_scores_from_lab_db(entries, enabled=use_rag_score)
         new_count = 0
         for entry in entries:
             if upsert_entry(conn, entry):
