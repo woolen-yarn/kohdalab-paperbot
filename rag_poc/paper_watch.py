@@ -409,29 +409,14 @@ REPORT_GROUPS = {
     "broad_high_impact": "Broad high-impact journals",
 }
 
-LEGACY_GROUP_ALIASES = {
-    "arxiv": "arxiv_weekly",
-    "pr": "aps_core",
-    "pr_ext": "aps_ext_reviews",
-    "nature": "nature_family",
-    "nature_ext": "nature_family",
-    "aip": "aip_family",
-    "japan": "japan_physics",
-    "iop_semiconductor": "iop_optics",
-    "optics": "iop_optics",
-    "nano_2d": "nano_2d_materials",
-    "broad_high": "broad_high_impact",
-}
-
-PAPER_WATCH_GROUP_ALIASES = {
-    **{group: group for group in REPORT_GROUPS},
-    **LEGACY_GROUP_ALIASES,
-}
-
-
 def normalize_paper_watch_group(group: str) -> str:
     normalized = compact_whitespace(str(group)).lower()
-    return PAPER_WATCH_GROUP_ALIASES.get(normalized, normalized)
+    if not normalized:
+        return ""
+    if normalized not in REPORT_GROUPS:
+        allowed = ", ".join(REPORT_GROUPS)
+        raise ValueError(f"Unknown Paper Watch group: {normalized}. Allowed: {allowed}")
+    return normalized
 
 
 def normalize_paper_watch_groups(raw: str) -> set[str]:
@@ -1959,7 +1944,10 @@ def refine_classification_with_llm(entry: dict) -> bool:
         return False
 
     classification = dict(entry.get("classification") or {})
-    report_group = normalize_paper_watch_group(str(result.get("report_group", "")).strip())
+    try:
+        report_group = normalize_paper_watch_group(str(result.get("report_group", "")).strip())
+    except ValueError:
+        report_group = ""
     if report_group in REPORT_GROUPS:
         classification["source_group"] = report_group
         classification["report_group"] = report_group
