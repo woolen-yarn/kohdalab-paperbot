@@ -114,14 +114,20 @@ These are the intended Synology DSM Task Scheduler entries. The tasks run as
 | `Paperbot` | Every day 08:00 | Zotero metadata/PDF sync, incremental RAG ingest, profile rebuild, Slack status notification | `cd /volume1/docker/paperbot && ./scripts/sync_zotero_pipeline.sh` |
 | `Paperbot-collect` | Every day 08:30 | Collect broad paper metadata, deduplicate, score, and store in SQLite without Slack posts | `cd /volume1/docker/paperbot && ./scripts/collect_paper_watch.sh --lookback-days 7` |
 | `Paperbot-arXiv-report` | Every Monday 09:00 | Weekly arXiv report from stored metadata | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope arxiv --lookback-days 7 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Weekly arXiv"` |
-| `Paperbot-Mon-report` | First Monday 09:30 | Monthly APS and Japan/applied physics report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aps_core,aps_ext_reviews,japan_physics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly APS/JP"` |
-| `Paperbot-Wed-report` | First Wednesday 09:30 | Monthly Nature, high-impact, nano/2D report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nature_family,broad_high_impact,nano_2d_materials --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nature/Nano"` |
-| `Paperbot-Fri-report` | First Friday 09:30 | Monthly AIP, IOP, and optics report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aip_family,iop_optics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly AIP/Optics"` |
+| `Paperbot-APS-JP-report` | First Wednesday 09:30 | Monthly APS and Japan/applied physics report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aps_core,aps_ext_reviews,japan_physics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly APS/JP"` |
+| `Paperbot-Nature-report` | Second Wednesday 09:30 | Monthly Nature-family and broad high-impact report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nature_family,broad_high_impact --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nature/High Impact"` |
+| `Paperbot-AIP-Optics-report` | Third Wednesday 09:30 | Monthly AIP, IOP, and optics report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aip_family,iop_optics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly AIP/Optics"` |
+| `Paperbot-Nano2D-report` | Fourth Wednesday 09:30 | Monthly nano, 2D materials, and applied materials report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nano_2d_materials --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nano/2D"` |
 
 Paper Watch does not send immediate alerts in the production schedule. Daily
 collection stores metadata, structured lab tags, report categories, and scores
 in a dedicated `paper_watch.sqlite3` database. Slack posts are generated from
 that stored database by weekly and monthly report tasks.
+
+Recommended cadence: collect metadata every day, report arXiv every week, and
+report journal groups monthly. Monthly reports are spread across four
+Wednesdays so the Slack channel stays readable and no single report becomes a
+large digest.
 
 ## Deployment
 
@@ -244,9 +250,7 @@ Paper Watch groups:
 | `nano_2d_materials` | Nano Letters, ACS Nano, ACS Photonics, ACS Applied Nano Materials, ACS Applied Electronic Materials, Journal of Materials Chemistry C, 2D Materials, npj 2D Materials and Applications |
 | `broad_high_impact` | Advanced Science, Advanced Materials, Science Advances, PNAS, Cell Reports Physical Science |
 
-Legacy aliases such as `pr`, `nature`, `aip`, and `nano_2d` are still accepted
-in existing `.env` files, but new schedules should use the unified group names
-above.
+Use these canonical group names in `.env`, DSM schedules, and manual commands.
 
 Access policy:
 

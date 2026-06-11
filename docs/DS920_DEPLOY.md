@@ -137,15 +137,21 @@ Create the tasks in DSM Control Panel > Task Scheduler. Use `root` as the owner.
 | `Paperbot` | Daily 08:00 | `cd /volume1/docker/paperbot && ./scripts/sync_zotero_pipeline.sh` |
 | `Paperbot-collect` | Daily 08:30 | `cd /volume1/docker/paperbot && ./scripts/collect_paper_watch.sh --lookback-days 7` |
 | `Paperbot-arXiv-report` | Every Monday 09:00 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope arxiv --lookback-days 7 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Weekly arXiv"` |
-| `Paperbot-Mon-report` | First Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aps_core,aps_ext_reviews,japan_physics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly APS/JP"` |
-| `Paperbot-Wed-report` | First Wednesday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nature_family,broad_high_impact,nano_2d_materials --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nature/Nano"` |
-| `Paperbot-Fri-report` | First Friday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aip_family,iop_optics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly AIP/Optics"` |
+| `Paperbot-APS-JP-report` | First Wednesday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aps_core,aps_ext_reviews,japan_physics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly APS/JP"` |
+| `Paperbot-Nature-report` | Second Wednesday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nature_family,broad_high_impact --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nature/High Impact"` |
+| `Paperbot-AIP-Optics-report` | Third Wednesday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aip_family,iop_optics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly AIP/Optics"` |
+| `Paperbot-Nano2D-report` | Fourth Wednesday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nano_2d_materials --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nano/2D"` |
 
 Immediate Paper Watch alerts are off in production. The daily collection task
 stores metadata, classifications, scores, and expiry timestamps in
 `rag_poc/index/paper_watch.sqlite3` and does not post to Slack. Weekly and
 monthly report tasks select stored papers and post one Slack message per
 selected paper.
+
+Recommended cadence: collect metadata every day, report arXiv every week, and
+report journal groups monthly. Monthly reports are spread across four
+Wednesdays so the Slack channel stays readable and no single report becomes a
+large digest.
 
 Paper Watch groups are intentionally broad but rate-limited. The same group is
 used for metadata collection and Slack reports:
@@ -166,9 +172,7 @@ The default access policy is conservative: arXiv uses a submitted-date window,
 Crossref requests include `mailto`, rows are capped per request, and journal
 jobs are staggered by week.
 
-Legacy aliases such as `pr`, `nature`, `aip`, and `nano_2d` are still accepted
-in existing `.env` files, but new schedules should use the unified group names
-above.
+Use these canonical group names in `.env`, DSM schedules, and manual commands.
 
 ## 6. Manual Paper Watch
 
