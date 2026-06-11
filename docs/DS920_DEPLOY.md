@@ -148,6 +148,11 @@ stores metadata, classifications, scores, and expiry timestamps in
 monthly report tasks select stored papers and post one Slack message per
 selected paper.
 
+`collect_paper_watch.sh` runs two steps: first metadata collection, then RAG
+enrichment for recently collected unscored candidates. Set
+`PAPER_WATCH_RAG_AFTER_COLLECT=false` only when the NAS should collect metadata
+without touching the RTX embedding endpoint.
+
 Recommended cadence: collect metadata every day, report arXiv every week, and
 report journal groups monthly. Monthly reports are spread across four
 Wednesdays so the Slack channel stays readable and no single report becomes a
@@ -181,6 +186,12 @@ Dry run daily metadata collection:
 ```bash
 cd /volume1/docker/paperbot
 sudo ./scripts/collect_paper_watch.sh --dry-run --sources arxiv --lookback-days 7
+```
+
+Dry run only the post-collection RAG enrichment step:
+
+```bash
+sudo ./scripts/run_paper_watch.sh --mode rag --dry-run --lookback-days 7
 ```
 
 Dry run the weekly arXiv report:

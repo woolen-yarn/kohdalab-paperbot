@@ -112,7 +112,7 @@ These are the intended Synology DSM Task Scheduler entries. The tasks run as
 | DSM task | Timing | Purpose | Command |
 | --- | --- | --- | --- |
 | `Paperbot` | Every day 08:00 | Zotero metadata/PDF sync, incremental RAG ingest, profile rebuild, Slack status notification | `cd /volume1/docker/paperbot && ./scripts/sync_zotero_pipeline.sh` |
-| `Paperbot-collect` | Every day 08:30 | Collect broad paper metadata, deduplicate, score, and store in SQLite without Slack posts | `cd /volume1/docker/paperbot && ./scripts/collect_paper_watch.sh --lookback-days 7` |
+| `Paperbot-collect` | Every day 08:30 | Collect broad paper metadata, then enrich recent candidates with RAG similarity without Slack posts | `cd /volume1/docker/paperbot && ./scripts/collect_paper_watch.sh --lookback-days 7` |
 | `Paperbot-arXiv-report` | Every Monday 09:00 | Weekly arXiv report from stored metadata | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope arxiv --lookback-days 7 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Weekly arXiv"` |
 | `Paperbot-APS-JP-report` | First Wednesday 09:30 | Monthly APS and Japan/applied physics report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aps_core,aps_ext_reviews,japan_physics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly APS/JP"` |
 | `Paperbot-Nature-report` | Second Wednesday 09:30 | Monthly Nature-family and broad high-impact report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nature_family,broad_high_impact --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nature/High Impact"` |
@@ -123,6 +123,11 @@ Paper Watch does not send immediate alerts in the production schedule. Daily
 collection stores metadata, structured lab tags, report categories, and scores
 in a dedicated `paper_watch.sqlite3` database. Slack posts are generated from
 that stored database by weekly and monthly report tasks.
+
+`collect_paper_watch.sh` runs two steps: first metadata collection, then RAG
+enrichment for recently collected unscored candidates. Set
+`PAPER_WATCH_RAG_AFTER_COLLECT=false` only when the NAS should collect metadata
+without touching the RTX embedding endpoint.
 
 Recommended cadence: collect metadata every day, report arXiv every week, and
 report journal groups monthly. Monthly reports are spread across four
@@ -267,6 +272,12 @@ Manual dry run:
 
 ```bash
 sudo ./scripts/collect_paper_watch.sh --dry-run --sources arxiv --lookback-days 7
+```
+
+Dry run only the post-collection RAG enrichment step:
+
+```bash
+sudo ./scripts/run_paper_watch.sh --mode rag --dry-run --lookback-days 7
 ```
 
 Dry run the weekly arXiv report from stored metadata:
