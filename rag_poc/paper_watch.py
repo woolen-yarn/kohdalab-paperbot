@@ -42,115 +42,115 @@ DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s\"<>]+", re.IGNORECASE)
 DEFAULT_RSS_FEEDS = [
     {
         "id": "aps_prl",
-        "group": "pr",
+        "group": "aps_core",
         "journal": "Physical Review Letters",
         "url": "https://feeds.aps.org/rss/recent/prl.xml",
     },
     {
         "id": "aps_prb",
-        "group": "pr",
+        "group": "aps_core",
         "journal": "Physical Review B",
         "url": "https://feeds.aps.org/rss/recent/prb.xml",
     },
     {
         "id": "aps_prapplied",
-        "group": "pr",
+        "group": "aps_core",
         "journal": "Physical Review Applied",
         "url": "https://feeds.aps.org/rss/recent/prapplied.xml",
     },
     {
         "id": "aps_prx",
-        "group": "pr_ext",
+        "group": "aps_ext_reviews",
         "journal": "Physical Review X",
         "url": "https://feeds.aps.org/rss/recent/prx.xml",
     },
     {
         "id": "aps_prresearch",
-        "group": "pr_ext",
+        "group": "aps_core",
         "journal": "Physical Review Research",
         "url": "https://feeds.aps.org/rss/recent/prresearch.xml",
     },
     {
         "id": "aps_prmaterials",
-        "group": "pr_ext",
+        "group": "aps_core",
         "journal": "Physical Review Materials",
         "url": "https://feeds.aps.org/rss/recent/prmaterials.xml",
     },
     {
         "id": "aps_rmp",
-        "group": "pr_ext",
+        "group": "aps_ext_reviews",
         "journal": "Reviews of Modern Physics",
         "url": "https://feeds.aps.org/rss/recent/rmp.xml",
     },
     {
         "id": "nature_physics",
-        "group": "nature",
+        "group": "nature_family",
         "journal": "Nature Physics",
         "url": "https://www.nature.com/nphys.rss",
     },
     {
         "id": "nature_communications",
-        "group": "nature",
+        "group": "nature_family",
         "journal": "Nature Communications",
         "url": "https://www.nature.com/ncomms.rss",
     },
     {
         "id": "communications_physics",
-        "group": "nature",
+        "group": "nature_family",
         "journal": "Communications Physics",
         "url": "https://www.nature.com/commsphys.rss",
     },
     {
         "id": "nature_materials",
-        "group": "nature_ext",
+        "group": "nature_family",
         "journal": "Nature Materials",
         "url": "https://www.nature.com/nmat.rss",
     },
     {
         "id": "nature_nanotechnology",
-        "group": "nature_ext",
+        "group": "nature_family",
         "journal": "Nature Nanotechnology",
         "url": "https://www.nature.com/nnano.rss",
     },
     {
         "id": "nature_electronics",
-        "group": "nature_ext",
+        "group": "nature_family",
         "journal": "Nature Electronics",
         "url": "https://www.nature.com/natelectron.rss",
     },
     {
         "id": "nature_photonics",
-        "group": "nature_ext",
+        "group": "nature_family",
         "journal": "Nature Photonics",
         "url": "https://www.nature.com/nphoton.rss",
     },
     {
         "id": "communications_materials",
-        "group": "nature_ext",
+        "group": "nature_family",
         "journal": "Communications Materials",
         "url": "https://www.nature.com/commsmat.rss",
     },
     {
         "id": "npj_spintronics",
-        "group": "nature_ext",
+        "group": "nature_family",
         "journal": "npj Spintronics",
         "url": "https://www.nature.com/npjspintronics.rss",
     },
     {
         "id": "npj_quantum_materials",
-        "group": "nature_ext",
+        "group": "nature_family",
         "journal": "npj Quantum Materials",
         "url": "https://www.nature.com/npjquantmats.rss",
     },
     {
         "id": "npj_2d_materials",
-        "group": "nano_2d",
+        "group": "nano_2d_materials",
         "journal": "npj 2D Materials and Applications",
         "url": "https://www.nature.com/npj2dmaterials.rss",
     },
     {
         "id": "aip_apl",
-        "group": "aip",
+        "group": "aip_family",
         "journal": "Applied Physics Letters",
         "url": "https://pubs.aip.org/action/showFeed?type=etoc&feed=rss&jc=apl",
     },
@@ -158,205 +158,205 @@ DEFAULT_RSS_FEEDS = [
 
 RSS_CROSSREF_FALLBACKS = {
     "aip_apl": {
-        "group": "aip",
+        "group": "aip_family",
         "journal": "Applied Physics Letters",
         "query": "spin-orbit spintronics semiconductor Rashba Dresselhaus TRKR",
         "issn": "0003-6951",
     },
     "aip_jap": {
-        "group": "aip",
+        "group": "aip_family",
         "journal": "Journal of Applied Physics",
         "query": "spin-orbit spintronics semiconductor Rashba Dresselhaus Kerr spectroscopy",
         "issn": "0021-8979",
     },
     "aip_apl_materials": {
-        "group": "aip",
+        "group": "aip_family",
         "journal": "APL Materials",
         "query": "spin-orbit spintronics semiconductor two-dimensional materials exciton magnetism",
         "issn": "2166-532X",
     },
     "aip_applied_physics_reviews": {
-        "group": "aip",
+        "group": "aip_family",
         "journal": "Applied Physics Reviews",
         "query": "spintronics spin-orbit semiconductor two-dimensional materials optical spectroscopy",
         "issn": "1931-9401",
     },
     "aip_advances": {
-        "group": "aip",
+        "group": "aip_family",
         "journal": "AIP Advances",
         "query": "spintronics spin-orbit semiconductor optical spectroscopy two-dimensional materials",
         "issn": "2158-3226",
     },
     "apl_quantum": {
-        "group": "aip",
+        "group": "aip_family",
         "journal": "APL Quantum",
         "query": "quantum materials spin photonics semiconductor optical spectroscopy quantum device",
         "issn": "2835-0103",
     },
     "jjap": {
-        "group": "japan",
+        "group": "japan_physics",
         "journal": "Japanese Journal of Applied Physics",
         "query": "spin-orbit spintronics semiconductor Rashba Dresselhaus time-resolved Kerr",
         "issn": "1347-4065",
     },
     "apex": {
-        "group": "japan",
+        "group": "japan_physics",
         "journal": "Applied Physics Express",
         "query": "spin-orbit spintronics semiconductor optical spectroscopy Rashba exciton",
         "issn": "1882-0778",
     },
     "jpsj": {
-        "group": "japan",
+        "group": "japan_physics",
         "journal": "Journal of the Physical Society of Japan",
         "query": "spin-orbit spintronics magnetism magnon semiconductor optical spectroscopy",
         "issn": "0031-9015",
     },
     "stam": {
-        "group": "japan",
+        "group": "japan_physics",
         "journal": "Science and Technology of Advanced Materials",
         "query": "spintronics semiconductor two-dimensional materials optical spectroscopy magnetism",
         "issn": "1468-6996",
     },
     "npg_asia_materials": {
-        "group": "japan",
+        "group": "japan_physics",
         "journal": "NPG Asia Materials",
         "query": "spintronics two-dimensional materials semiconductor exciton magnetism photonics",
         "issn": "1884-4049",
     },
     "semicond_sci_technol": {
-        "group": "iop_semiconductor",
+        "group": "iop_optics",
         "journal": "Semiconductor Science and Technology",
         "query": "spin-orbit semiconductor Rashba Dresselhaus spin diffusion Kerr spectroscopy",
         "issn": "0268-1242",
     },
     "j_phys_d": {
-        "group": "iop_semiconductor",
+        "group": "iop_optics",
         "journal": "Journal of Physics D: Applied Physics",
         "query": "spintronics spin-orbit semiconductor optical spectroscopy magnetism magnon",
         "issn": "0022-3727",
     },
     "laser_photonics_reviews": {
-        "group": "optics",
+        "group": "iop_optics",
         "journal": "Laser & Photonics Reviews",
         "query": "optical spectroscopy spin exciton valley semiconductor two-dimensional materials",
         "issn": "1863-8880",
     },
     "optics_letters": {
-        "group": "optics",
+        "group": "iop_optics",
         "journal": "Optics Letters",
         "query": "time-resolved Kerr optical spectroscopy spin exciton semiconductor photonics",
         "issn": "0146-9592",
     },
     "prx": {
-        "group": "pr_ext",
+        "group": "aps_ext_reviews",
         "journal": "Physical Review X",
         "query": "spin-orbit spintronics semiconductor quantum materials optical spectroscopy",
         "issn": "2160-3308",
     },
     "prresearch": {
-        "group": "pr_ext",
+        "group": "aps_core",
         "journal": "Physical Review Research",
         "query": "spin-orbit spintronics semiconductor Rashba exciton magnon",
         "issn": "2643-1564",
     },
     "prmaterials": {
-        "group": "pr_ext",
+        "group": "aps_core",
         "journal": "Physical Review Materials",
         "query": "spin-orbit semiconductor two-dimensional materials magnetism exciton",
         "issn": "2475-9953",
     },
     "rmp": {
-        "group": "pr_ext",
+        "group": "aps_ext_reviews",
         "journal": "Reviews of Modern Physics",
         "query": "spintronics spin-orbit semiconductor two-dimensional materials magnetism",
         "issn": "0034-6861",
     },
     "nano_letters": {
-        "group": "nano_2d",
+        "group": "nano_2d_materials",
         "journal": "Nano Letters",
         "query": "spin-orbit spintronics two-dimensional materials exciton valley semiconductor",
         "issn": "1530-6992",
     },
     "acs_nano": {
-        "group": "nano_2d",
+        "group": "nano_2d_materials",
         "journal": "ACS Nano",
         "query": "two-dimensional materials spin exciton valley magnetism photonics",
         "issn": "1936-086X",
     },
     "acs_photonics": {
-        "group": "nano_2d",
+        "group": "nano_2d_materials",
         "journal": "ACS Photonics",
         "query": "spin optical spectroscopy exciton valley semiconductor photonics",
         "issn": "2330-4022",
     },
     "acs_ami": {
-        "group": "nano_2d",
+        "group": "nano_2d_materials",
         "journal": "ACS Applied Materials & Interfaces",
         "query": "spintronics two-dimensional semiconductor optical materials exciton",
         "issn": "1944-8252",
     },
     "two_d_materials": {
-        "group": "nano_2d",
+        "group": "nano_2d_materials",
         "journal": "2D Materials",
         "query": "two-dimensional semiconductor spin-orbit exciton valley magnetism",
         "issn": "2053-1583",
     },
     "npj_2d_materials": {
-        "group": "nano_2d",
+        "group": "nano_2d_materials",
         "journal": "npj 2D Materials and Applications",
         "query": "two-dimensional materials spintronics exciton valley magnetism photonics",
         "issn": "2397-7132",
     },
     "acs_applied_nano_materials": {
-        "group": "nano_2d",
+        "group": "nano_2d_materials",
         "journal": "ACS Applied Nano Materials",
         "query": "two-dimensional nanomaterials spin exciton valley optical semiconductor",
         "issn": "2574-0970",
     },
     "acs_applied_electronic_materials": {
-        "group": "nano_2d",
+        "group": "nano_2d_materials",
         "journal": "ACS Applied Electronic Materials",
         "query": "electronic materials semiconductor spintronics photonics two-dimensional materials",
         "issn": "2637-6113",
     },
     "journal_materials_chemistry_c": {
-        "group": "nano_2d",
+        "group": "nano_2d_materials",
         "journal": "Journal of Materials Chemistry C",
         "query": "optical magnetic electronic materials spin exciton semiconductor photonics",
         "issn": "2050-7534",
     },
     "science_advances": {
-        "group": "broad_high",
+        "group": "broad_high_impact",
         "journal": "Science Advances",
         "query": "spin-orbit spintronics semiconductor two-dimensional materials exciton magnon",
         "issn": "2375-2548",
     },
     "advanced_materials": {
-        "group": "broad_high",
+        "group": "broad_high_impact",
         "journal": "Advanced Materials",
         "query": "spintronics two-dimensional materials semiconductor exciton magnetism photonics",
         "issn": "1521-4095",
     },
     "advanced_science": {
-        "group": "broad_high",
+        "group": "broad_high_impact",
         "journal": "Advanced Science",
         "query": "spin-orbit spintronics two-dimensional materials exciton valley magnetism",
         "issn": "2198-3844",
     },
     "communications_materials": {
-        "group": "nature_ext",
+        "group": "nature_family",
         "journal": "Communications Materials",
         "query": "spintronics quantum materials two-dimensional materials optical spectroscopy magnetism",
         "issn": "2662-4443",
     },
     "npj_spintronics": {
-        "group": "nature_ext",
+        "group": "nature_family",
         "journal": "npj Spintronics",
         "query": "spintronics spin transport spin-orbit magnonics magnetic materials semiconductor",
         "issn": "2948-2119",
     },
     "npj_quantum_materials": {
-        "group": "nature_ext",
+        "group": "nature_family",
         "journal": "npj Quantum Materials",
         "query": "quantum materials spin-orbit magnetism two-dimensional materials optical spectroscopy",
         "issn": "2397-4648",
@@ -409,7 +409,7 @@ REPORT_GROUPS = {
     "broad_high_impact": "Broad high-impact journals",
 }
 
-SOURCE_GROUP_REPORT_DEFAULTS = {
+LEGACY_GROUP_ALIASES = {
     "arxiv": "arxiv_weekly",
     "pr": "aps_core",
     "pr_ext": "aps_ext_reviews",
@@ -422,6 +422,25 @@ SOURCE_GROUP_REPORT_DEFAULTS = {
     "nano_2d": "nano_2d_materials",
     "broad_high": "broad_high_impact",
 }
+
+PAPER_WATCH_GROUP_ALIASES = {
+    **{group: group for group in REPORT_GROUPS},
+    **LEGACY_GROUP_ALIASES,
+}
+
+
+def normalize_paper_watch_group(group: str) -> str:
+    normalized = compact_whitespace(str(group)).lower()
+    return PAPER_WATCH_GROUP_ALIASES.get(normalized, normalized)
+
+
+def normalize_paper_watch_groups(raw: str) -> set[str]:
+    return {
+        group
+        for group in (normalize_paper_watch_group(part) for part in raw.split(","))
+        if group
+    }
+
 
 REPORT_GROUP_KEYWORDS = {
     "arxiv_weekly": [
@@ -850,14 +869,19 @@ def paper_watch_sources() -> set[str]:
 
 
 def rss_groups() -> set[str]:
-    raw = os.environ.get("PAPER_WATCH_RSS_GROUPS", "pr,nature,aip")
-    return {group.strip().lower() for group in raw.split(",") if group.strip()}
+    raw = os.environ.get("PAPER_WATCH_RSS_GROUPS", "aps_core,nature_family,aip_family")
+    return normalize_paper_watch_groups(raw)
 
 
 def rss_feeds() -> list[dict]:
     configured = os.environ.get("PAPER_WATCH_RSS_FEEDS", "").strip()
     if not configured:
-        return [dict(feed) for feed in DEFAULT_RSS_FEEDS]
+        feeds = []
+        for feed in DEFAULT_RSS_FEEDS:
+            normalized = dict(feed)
+            normalized["group"] = normalize_paper_watch_group(normalized.get("group", ""))
+            feeds.append(normalized)
+        return feeds
 
     feeds = []
     for index, raw_feed in enumerate(configured.split(";"), start=1):
@@ -873,7 +897,7 @@ def rss_feeds() -> list[dict]:
             feeds.append(
                 {
                     "id": feed_id.lower(),
-                    "group": group.lower(),
+                    "group": normalize_paper_watch_group(group),
                     "journal": journal,
                     "url": url,
                 }
@@ -1223,7 +1247,7 @@ def rss_crossref_fallback_entries(
         fallbacks = [
             (fallback_id, fallback)
             for fallback_id, fallback in RSS_CROSSREF_FALLBACKS.items()
-            if fallback["group"] == group
+            if normalize_paper_watch_group(fallback["group"]) == group
             and fallback_id not in rss_ids_with_entries
             and normalize_title_for_dedupe(fallback["journal"]) not in rss_journals_with_entries
         ]
@@ -1762,15 +1786,19 @@ def mark_posted(conn: sqlite3.Connection, items: list[dict]) -> None:
 
 
 def paper_watch_group_maps() -> tuple[dict[str, str], dict[str, str]]:
-    id_to_group = {feed["id"]: feed["group"] for feed in rss_feeds()}
+    id_to_group = {
+        feed["id"]: normalize_paper_watch_group(feed["group"])
+        for feed in rss_feeds()
+    }
     journal_to_group = {
-        normalize_title_for_dedupe(feed["journal"]): feed["group"]
+        normalize_title_for_dedupe(feed["journal"]): normalize_paper_watch_group(feed["group"])
         for feed in rss_feeds()
     }
     for fallback_id, fallback in RSS_CROSSREF_FALLBACKS.items():
-        id_to_group[f"crossref:{fallback_id}"] = fallback["group"]
-        id_to_group[fallback_id] = fallback["group"]
-        journal_to_group[normalize_title_for_dedupe(fallback["journal"])] = fallback["group"]
+        group = normalize_paper_watch_group(fallback["group"])
+        id_to_group[f"crossref:{fallback_id}"] = group
+        id_to_group[fallback_id] = group
+        journal_to_group[normalize_title_for_dedupe(fallback["journal"])] = group
     return id_to_group, journal_to_group
 
 
@@ -1780,7 +1808,7 @@ def item_group(item: dict) -> str:
     if source_detail in id_to_group:
         return id_to_group[source_detail]
     if item.get("source") == "arxiv":
-        return "arxiv"
+        return "arxiv_weekly"
     journal_key = normalize_title_for_dedupe(item.get("journal", ""))
     return journal_to_group.get(journal_key, "")
 
@@ -1825,19 +1853,17 @@ def guess_paper_type(text: str) -> str:
 
 def classify_entry(entry: dict) -> None:
     text = item_text_for_classification(entry)
-    source_group = item_group(entry)
+    source_group = normalize_paper_watch_group(item_group(entry))
     scores = report_group_scores(text)
-    if source_group in SOURCE_GROUP_REPORT_DEFAULTS:
-        scores[SOURCE_GROUP_REPORT_DEFAULTS[source_group]] = (
-            scores.get(SOURCE_GROUP_REPORT_DEFAULTS[source_group], 0.0) + 10.0
-        )
+    if source_group in REPORT_GROUPS:
+        scores[source_group] = scores.get(source_group, 0.0) + 10.0
 
     report_group = max(scores, key=lambda group: scores[group])
     if scores.get(report_group, 0.0) <= 0:
-        report_group = SOURCE_GROUP_REPORT_DEFAULTS.get(source_group, "aip_family")
+        report_group = source_group if source_group in REPORT_GROUPS else "aip_family"
 
     classification = {
-        "source_group": source_group or entry.get("source", ""),
+        "source_group": report_group,
         "report_group": report_group,
         "report_group_label": REPORT_GROUPS.get(report_group, report_group),
         "paper_type": guess_paper_type(text),
@@ -1853,7 +1879,7 @@ def classify_entry(entry: dict) -> None:
     retention_days = max(1, env_int("PAPER_WATCH_RETENTION_DAYS", 180))
     expires_at = datetime.now(timezone.utc) + timedelta(days=retention_days)
 
-    entry["source_group"] = classification["source_group"]
+    entry["source_group"] = report_group
     entry["report_group"] = report_group
     entry["paper_type"] = classification["paper_type"]
     entry["classification"] = classification
@@ -1891,12 +1917,12 @@ def build_classification_prompt(entry: dict) -> str:
     return f"""Classify this physics/materials-science paper for a lab paper-watch database.
 Return only compact JSON. Do not include markdown.
 
-Allowed report_group values:
+Allowed group values:
 {allowed_groups}
 
 JSON schema:
 {{
-  "report_group": "one allowed journal-family value, primarily inferred from journal/source",
+  "report_group": "one allowed value, inferred from journal/source and used for collection/reporting",
   "paper_type": "experiment | theory/simulation | review | article",
   "materials": ["short labels"],
   "methods": ["short labels"],
@@ -1933,10 +1959,12 @@ def refine_classification_with_llm(entry: dict) -> bool:
         return False
 
     classification = dict(entry.get("classification") or {})
-    report_group = str(result.get("report_group", "")).strip()
+    report_group = normalize_paper_watch_group(str(result.get("report_group", "")).strip())
     if report_group in REPORT_GROUPS:
+        classification["source_group"] = report_group
         classification["report_group"] = report_group
         classification["report_group_label"] = REPORT_GROUPS[report_group]
+        entry["source_group"] = report_group
         entry["report_group"] = report_group
 
     paper_type = str(result.get("paper_type", "")).strip()
@@ -2028,7 +2056,7 @@ def selected_report_groups(args: argparse.Namespace) -> set[str]:
     raw = ",".join(
         value for value in (getattr(args, "report_groups", ""), args.rss_groups) if value
     )
-    return {group.strip().lower() for group in raw.split(",") if group.strip()}
+    return normalize_paper_watch_groups(raw)
 
 
 def report_scope_match(item: dict, scope: str, selected_groups: set[str]) -> bool:
@@ -2719,12 +2747,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-score", type=float, default=env_float("PAPER_WATCH_MIN_SCORE", 6.0))
     parser.add_argument("--lookback-days", type=int, default=env_int("PAPER_WATCH_LOOKBACK_DAYS", 14))
     parser.add_argument("--sources", default="", help="Comma-separated sources, e.g. arxiv,crossref,rss.")
-    parser.add_argument("--rss-groups", default="", help="Comma-separated RSS groups, e.g. pr,nature,aip.")
+    parser.add_argument(
+        "--rss-groups",
+        default="",
+        help="Comma-separated Paper Watch groups, e.g. aps_core,nature_family,aip_family.",
+    )
     parser.add_argument(
         "--report-groups",
         default=os.environ.get("PAPER_WATCH_REPORT_GROUPS", ""),
         help=(
-            "Comma-separated journal-family report groups, e.g. "
+            "Comma-separated Paper Watch groups, e.g. "
             "aps_core,japan_physics."
         ),
     )
@@ -2787,11 +2819,14 @@ def fetch_and_score_entries(args: argparse.Namespace, terms: dict[str, float]) -
 
     if "rss" in sources:
         selected_groups = (
-            {group.strip().lower() for group in args.rss_groups.split(",") if group.strip()}
+            normalize_paper_watch_groups(args.rss_groups)
             if args.rss_groups
             else rss_groups()
         )
-        feeds = [feed for feed in rss_feeds() if feed["group"] in selected_groups]
+        feeds = [
+            feed for feed in rss_feeds()
+            if normalize_paper_watch_group(feed["group"]) in selected_groups
+        ]
         rss_entries = fetch_rss_entries(
             feeds,
             max_items_per_feed=env_int("PAPER_WATCH_RSS_MAX_ITEMS_PER_FEED", 20),

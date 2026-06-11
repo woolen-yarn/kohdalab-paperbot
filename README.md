@@ -224,34 +224,17 @@ Scoring inputs:
 
 Collected metadata and classifications:
 
-- source group: where the paper came from, such as `pr`, `aip`, `japan`, or
-  `nano_2d`
-- report group: one of the journal-family monthly report buckets below
+- Paper Watch group: one shared group used for both collection and Slack reports
 - paper type: `experiment`, `theory/simulation`, `review`, or `article`
 - lab tags: `materials`, `methods`, `physics`, and `applications`
 - expiry time: old paper-watch metadata is deleted after
   `PAPER_WATCH_RETENTION_DAYS`
 
-Default source groups:
+Paper Watch groups:
 
-| Group | Main sources |
+| Group | Sources and report bucket |
 | --- | --- |
-| `arxiv` | arXiv API |
-| `pr` | PRL, PRB, PR Research, PR Applied, PR Materials |
-| `pr_ext` | PRX, PRX Quantum, PRX Energy, RMP |
-| `nature` | Nature Physics, Nature Communications, Communications Physics |
-| `nature_ext` | Nature Materials, Nature Nanotechnology, Nature Photonics, Nature Electronics, Nature Reviews Materials, Communications Materials, npj Spintronics, npj Quantum Materials |
-| `aip` | Applied Physics Letters, Journal of Applied Physics, APL Materials, APL Quantum, Applied Physics Reviews, AIP Advances |
-| `japan` | Japanese Journal of Applied Physics, Applied Physics Express, JPSJ, STAM, NPG Asia Materials |
-| `iop_semiconductor` | Semiconductor Science and Technology, Journal of Physics D |
-| `optics` | Laser & Photonics Reviews, Optics Letters |
-| `nano_2d` | Nano Letters, ACS Nano, ACS Photonics, ACS Applied Nano Materials, ACS Applied Electronic Materials, Journal of Materials Chemistry C, 2D Materials, npj 2D Materials and Applications |
-| `broad_high` | Advanced Science, Advanced Materials, Science Advances, PNAS, Cell Reports Physical Science |
-
-Journal-family report groups:
-
-| Report group | Purpose |
-| --- | --- |
+| `arxiv_weekly` | arXiv API |
 | `aps_core` | PRL, PRB, PR Applied, PR Research, PR Materials |
 | `aps_ext_reviews` | PRX, PRX Quantum, PRX Energy, RMP |
 | `nature_family` | Nature Physics, Nature Communications, Communications Physics, Communications Materials, npj Spintronics, npj Quantum Materials, and related Nature journals |
@@ -260,6 +243,10 @@ Journal-family report groups:
 | `iop_optics` | Semiconductor Science and Technology, Journal of Physics D, Laser & Photonics Reviews, Optics Letters |
 | `nano_2d_materials` | Nano Letters, ACS Nano, ACS Photonics, ACS Applied Nano Materials, ACS Applied Electronic Materials, Journal of Materials Chemistry C, 2D Materials, npj 2D Materials and Applications |
 | `broad_high_impact` | Advanced Science, Advanced Materials, Science Advances, PNAS, Cell Reports Physical Science |
+
+Legacy aliases such as `pr`, `nature`, `aip`, and `nano_2d` are still accepted
+in existing `.env` files, but new schedules should use the unified group names
+above.
 
 Access policy:
 
