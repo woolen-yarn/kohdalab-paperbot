@@ -240,12 +240,12 @@ Default source groups:
 | `pr` | PRL, PRB, PR Research, PR Applied, PR Materials |
 | `pr_ext` | PRX, PRX Quantum, PRX Energy, RMP |
 | `nature` | Nature Physics, Nature Communications, Communications Physics |
-| `nature_ext` | Nature Materials, Nature Nanotechnology, Nature Photonics, Nature Electronics, Nature Reviews Materials |
-| `aip` | Applied Physics Letters, Journal of Applied Physics, APL Materials, Applied Physics Reviews, AIP Advances |
+| `nature_ext` | Nature Materials, Nature Nanotechnology, Nature Photonics, Nature Electronics, Nature Reviews Materials, Communications Materials, npj Spintronics, npj Quantum Materials |
+| `aip` | Applied Physics Letters, Journal of Applied Physics, APL Materials, APL Quantum, Applied Physics Reviews, AIP Advances |
 | `japan` | Japanese Journal of Applied Physics, Applied Physics Express, JPSJ, STAM, NPG Asia Materials |
 | `iop_semiconductor` | Semiconductor Science and Technology, Journal of Physics D |
 | `optics` | Laser & Photonics Reviews, Optics Letters |
-| `nano_2d` | Nano Letters, ACS Nano, ACS Photonics, 2D Materials, npj 2D Materials and Applications |
+| `nano_2d` | Nano Letters, ACS Nano, ACS Photonics, ACS Applied Nano Materials, ACS Applied Electronic Materials, Journal of Materials Chemistry C, 2D Materials, npj 2D Materials and Applications |
 | `broad_high` | Advanced Science, Advanced Materials, Science Advances, PNAS, Cell Reports Physical Science |
 
 Journal-family report groups:
@@ -254,11 +254,11 @@ Journal-family report groups:
 | --- | --- |
 | `aps_core` | PRL, PRB, PR Applied, PR Research, PR Materials |
 | `aps_ext_reviews` | PRX, PRX Quantum, PRX Energy, RMP |
-| `nature_family` | Nature Physics, Nature Communications, Communications Physics, and related Nature journals |
-| `aip_family` | APL, JAP, APL Materials, Applied Physics Reviews, AIP Advances |
+| `nature_family` | Nature Physics, Nature Communications, Communications Physics, Communications Materials, npj Spintronics, npj Quantum Materials, and related Nature journals |
+| `aip_family` | APL, JAP, APL Materials, APL Quantum, Applied Physics Reviews, AIP Advances |
 | `japan_physics` | JJAP, APEX, JPSJ, STAM, NPG Asia Materials |
 | `iop_optics` | Semiconductor Science and Technology, Journal of Physics D, Laser & Photonics Reviews, Optics Letters |
-| `nano_2d_materials` | Nano Letters, ACS Nano, ACS Photonics, 2D Materials, npj 2D Materials and Applications |
+| `nano_2d_materials` | Nano Letters, ACS Nano, ACS Photonics, ACS Applied Nano Materials, ACS Applied Electronic Materials, Journal of Materials Chemistry C, 2D Materials, npj 2D Materials and Applications |
 | `broad_high_impact` | Advanced Science, Advanced Materials, Science Advances, PNAS, Cell Reports Physical Science |
 
 Access policy:
