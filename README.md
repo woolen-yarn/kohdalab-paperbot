@@ -231,8 +231,10 @@ messages, not one combined digest.
 
 Scoring inputs:
 
-- profile terms from the indexed lab PDFs
-- title and abstract term matches
+- weighted profile terms generated from the indexed lab PDFs
+- material-method-physics combination bonuses from `lab_profile.json`
+- negative-profile penalties for peripheral topics such as battery-only or catalysis-only papers
+- title and abstract term matches with safer short-term matching
 - optional candidate abstract embedding similarity to the SQLite RAG index
 - journal/source group
 - duplicate suppression via DOI and normalized title
@@ -242,6 +244,7 @@ Collected metadata and classifications:
 - Paper Watch group: one shared group used for both collection and Slack reports
 - paper type: `experiment`, `theory/simulation`, `review`, or `article`
 - lab tags: `materials`, `methods`, `physics`, and `applications`
+- profile score reasons: matched weighted terms, common theme combinations, and penalties
 - expiry time: old paper-watch metadata is deleted after
   `PAPER_WATCH_RETENTION_DAYS`
 
@@ -354,7 +357,8 @@ Important files on the NAS:
 | `/volume1/docker/paperbot/rag_poc/papers/zotero/` | local Zotero PDF archive |
 | `/volume1/docker/paperbot/rag_poc/index/chunks.sqlite3` | metadata, chunks, embeddings, seen papers |
 | `/volume1/docker/paperbot/rag_poc/index/paper_watch.sqlite3` | collected external paper metadata, classifications, scores, and report state |
-| `/volume1/docker/paperbot/rag_poc/index/lab_profile.md` | generated lab interest profile |
+| `/volume1/docker/paperbot/rag_poc/index/lab_profile.md` | generated human-readable lab interest profile |
+| `/volume1/docker/paperbot/rag_poc/index/lab_profile.json` | scoring-ready profile with core themes, hot topics, combinations, weighted terms, and negative terms |
 | `/volume1/docker/paperbot/logs/sync_zotero_pipeline.log` | scheduled Zotero/RAG pipeline log |
 | `/volume1/docker/paperbot/logs/paper_watch.log` | scheduled Paper Watch log |
 
