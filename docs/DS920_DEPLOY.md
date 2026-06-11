@@ -137,9 +137,9 @@ Create the tasks in DSM Control Panel > Task Scheduler. Use `root` as the owner.
 | `Paperbot` | Daily 08:00 | `cd /volume1/docker/paperbot && ./scripts/sync_zotero_pipeline.sh` |
 | `Paperbot-collect` | Daily 08:30 | `cd /volume1/docker/paperbot && ./scripts/collect_paper_watch.sh --lookback-days 7` |
 | `Paperbot-arXiv-report` | Every Monday 09:00 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope arxiv --lookback-days 7 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Weekly arXiv"` |
-| `Paperbot-Mon-report` | First Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups spin_orbit_semiconductors,japan_applied_physics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Spin/JP"` |
-| `Paperbot-Wed-report` | First Wednesday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups quantum_2d_materials,optical_spectroscopy_photonics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly 2D/Optics"` |
-| `Paperbot-Fri-report` | First Friday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups magnetism_magnonics,devices_applied,high_impact_general,reviews_perspectives --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Mag/Device"` |
+| `Paperbot-Mon-report` | First Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aps_core,aps_ext_reviews,japan_physics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly APS/JP"` |
+| `Paperbot-Wed-report` | First Wednesday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nature_family,broad_high_impact,nano_2d_materials --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nature/Nano"` |
+| `Paperbot-Fri-report` | First Friday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aip_family,iop_optics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly AIP/Optics"` |
 
 Immediate Paper Watch alerts are off in production. The daily collection task
 stores metadata, classifications, scores, and expiry timestamps in
@@ -164,18 +164,18 @@ The default access policy is conservative: arXiv uses a submitted-date window,
 Crossref requests include `mailto`, rows are capped per request, and journal
 jobs are staggered by week.
 
-Refined monthly report groups:
+Journal-family monthly report groups:
 
 | Report group | Use |
 | --- | --- |
-| `spin_orbit_semiconductors` | PSH, Rashba/Dresselhaus, 2DEG, spin diffusion, III-V quantum wells |
-| `optical_spectroscopy_photonics` | TRKR, Kerr, transient grating, PL, excitons, structured light |
-| `quantum_2d_materials` | TMDs, CrSBr, GaTe/GaSe, Janus materials, van der Waals systems |
-| `magnetism_magnonics` | magnets, spin waves, magnons, spin Hall, spin torque, altermagnets |
-| `devices_applied` | devices, switching, interfaces, heterostructures, applied materials |
-| `high_impact_general` | broad Nature/Science/Advanced/PNAS style papers |
-| `japan_applied_physics` | JJAP, APEX, JPSJ, STAM, NPG Asia Materials |
-| `reviews_perspectives` | reviews, perspectives, roadmaps, tutorials, outlook papers |
+| `aps_core` | PRL, PRB, PR Applied, PR Research, PR Materials |
+| `aps_ext_reviews` | PRX, PRX Quantum, PRX Energy, RMP |
+| `nature_family` | Nature Physics, Nature Communications, Communications Physics, and related Nature journals |
+| `aip_family` | APL, JAP, APL Materials, Applied Physics Reviews, AIP Advances |
+| `japan_physics` | JJAP, APEX, JPSJ, STAM, NPG Asia Materials |
+| `iop_optics` | Semiconductor Science and Technology, Journal of Physics D, Laser & Photonics Reviews, Optics Letters |
+| `nano_2d_materials` | Nano Letters, ACS Nano, ACS Photonics, 2D Materials, npj 2D Materials and Applications |
+| `broad_high_impact` | Advanced Science, Advanced Materials, Science Advances, PNAS, Cell Reports Physical Science |
 
 ## 6. Manual Paper Watch
 
@@ -195,7 +195,7 @@ sudo ./scripts/report_paper_watch.sh --dry-run --report-scope arxiv --lookback-d
 Dry run a monthly journal report:
 
 ```bash
-sudo ./scripts/report_paper_watch.sh --dry-run --report-scope journals --report-groups spin_orbit_semiconductors,japan_applied_physics --lookback-days 35 --post-limit 3
+sudo ./scripts/report_paper_watch.sh --dry-run --report-scope journals --report-groups aps_core,japan_physics --lookback-days 35 --post-limit 3
 ```
 
 Immediate fetch-and-post mode is retained for manual debugging only:

@@ -326,66 +326,68 @@ DEFAULT_TERMS = {
 }
 
 REPORT_GROUPS = {
-    "spin_orbit_semiconductors": "Spin-orbit semiconductors",
-    "optical_spectroscopy_photonics": "Optical spectroscopy and photonics",
-    "quantum_2d_materials": "Quantum and 2D materials",
-    "magnetism_magnonics": "Magnetism and magnonics",
-    "devices_applied": "Devices and applied materials",
-    "high_impact_general": "High-impact general physics",
-    "japan_applied_physics": "Japan/applied physics journals",
-    "reviews_perspectives": "Reviews and perspectives",
+    "arxiv_weekly": "arXiv weekly",
+    "aps_core": "APS core journals",
+    "aps_ext_reviews": "APS extended/review journals",
+    "nature_family": "Nature-family journals",
+    "aip_family": "AIP applied physics journals",
+    "japan_physics": "Japan physics/applied physics journals",
+    "iop_optics": "IOP and optics journals",
+    "nano_2d_materials": "Nano and 2D materials journals",
+    "broad_high_impact": "Broad high-impact journals",
 }
 
 SOURCE_GROUP_REPORT_DEFAULTS = {
-    "arxiv": "spin_orbit_semiconductors",
-    "pr": "spin_orbit_semiconductors",
-    "pr_ext": "high_impact_general",
-    "nature": "high_impact_general",
-    "nature_ext": "high_impact_general",
-    "aip": "devices_applied",
-    "japan": "japan_applied_physics",
-    "iop_semiconductor": "spin_orbit_semiconductors",
-    "optics": "optical_spectroscopy_photonics",
-    "nano_2d": "quantum_2d_materials",
-    "broad_high": "high_impact_general",
+    "arxiv": "arxiv_weekly",
+    "pr": "aps_core",
+    "pr_ext": "aps_ext_reviews",
+    "nature": "nature_family",
+    "nature_ext": "nature_family",
+    "aip": "aip_family",
+    "japan": "japan_physics",
+    "iop_semiconductor": "iop_optics",
+    "optics": "iop_optics",
+    "nano_2d": "nano_2d_materials",
+    "broad_high": "broad_high_impact",
 }
 
 REPORT_GROUP_KEYWORDS = {
-    "spin_orbit_semiconductors": [
-        "persistent spin helix", "spin helix", "rashba", "dresselhaus",
-        "spin-orbit", "spin orbit", "2deg", "two-dimensional electron gas",
-        "spin diffusion", "spin lifetime", "gaas", "ingaas", "quantum well",
+    "arxiv_weekly": [
+        "arxiv",
     ],
-    "optical_spectroscopy_photonics": [
-        "time-resolved kerr", "trkr", "kerr rotation", "transient grating",
-        "photoluminescence", "optical spectroscopy", "photonics", "laser",
-        "spatial light modulator", "structured light", "exciton",
+    "aps_core": [
+        "physical review letters", "physical review b", "physical review applied",
+        "physical review research", "physical review materials",
     ],
-    "quantum_2d_materials": [
-        "two-dimensional", "2d material", "monolayer", "van der waals",
-        "wse2", "ws2", "mos2", "crsbr", "gallium telluride", "janus",
+    "aps_ext_reviews": [
+        "physical review x", "prx", "reviews of modern physics",
+        "physical review x quantum", "physical review x energy", "review",
     ],
-    "magnetism_magnonics": [
-        "magnet", "magnetic", "ferromagnet", "antiferromagnet",
-        "magnon", "magnonic", "skyrmion", "spin wave", "spin torque",
-        "spin hall", "altermagnet",
+    "nature_family": [
+        "nature physics", "nature communications", "communications physics",
+        "nature materials", "nature nanotechnology", "nature photonics",
+        "nature electronics",
     ],
-    "devices_applied": [
-        "device", "transistor", "memory", "logic", "switching",
-        "sensor", "application", "heterostructure", "interface",
-        "thin film", "superlattice",
+    "aip_family": [
+        "applied physics letters", "journal of applied physics",
+        "apl materials", "applied physics reviews", "aip advances",
     ],
-    "high_impact_general": [
-        "nature", "science", "advanced", "pnas", "cell reports",
-    ],
-    "japan_applied_physics": [
+    "japan_physics": [
         "japanese journal of applied physics", "applied physics express",
         "journal of the physical society of japan", "science and technology of advanced materials",
         "npg asia materials",
     ],
-    "reviews_perspectives": [
-        "review", "reviews", "perspective", "roadmap", "tutorial",
-        "progress", "outlook",
+    "iop_optics": [
+        "semiconductor science and technology", "journal of physics d",
+        "laser & photonics reviews", "optics letters",
+    ],
+    "nano_2d_materials": [
+        "nano letters", "acs nano", "acs photonics", "acs applied materials",
+        "2d materials", "npj 2d materials",
+    ],
+    "broad_high_impact": [
+        "advanced science", "advanced materials", "science advances",
+        "pnas", "cell reports physical science",
     ],
 }
 
@@ -1753,14 +1755,12 @@ def classify_entry(entry: dict) -> None:
     scores = report_group_scores(text)
     if source_group in SOURCE_GROUP_REPORT_DEFAULTS:
         scores[SOURCE_GROUP_REPORT_DEFAULTS[source_group]] = (
-            scores.get(SOURCE_GROUP_REPORT_DEFAULTS[source_group], 0.0) + 0.75
+            scores.get(SOURCE_GROUP_REPORT_DEFAULTS[source_group], 0.0) + 10.0
         )
-    if source_group == "japan":
-        scores["japan_applied_physics"] = scores.get("japan_applied_physics", 0.0) + 1.5
 
     report_group = max(scores, key=lambda group: scores[group])
     if scores.get(report_group, 0.0) <= 0:
-        report_group = SOURCE_GROUP_REPORT_DEFAULTS.get(source_group, "devices_applied")
+        report_group = SOURCE_GROUP_REPORT_DEFAULTS.get(source_group, "aip_family")
 
     classification = {
         "source_group": source_group or entry.get("source", ""),
@@ -1822,7 +1822,7 @@ Allowed report_group values:
 
 JSON schema:
 {{
-  "report_group": "one allowed value",
+  "report_group": "one allowed journal-family value, primarily inferred from journal/source",
   "paper_type": "experiment | theory/simulation | review | article",
   "materials": ["short labels"],
   "methods": ["short labels"],
@@ -2650,8 +2650,8 @@ def parse_args() -> argparse.Namespace:
         "--report-groups",
         default=os.environ.get("PAPER_WATCH_REPORT_GROUPS", ""),
         help=(
-            "Comma-separated refined report groups, e.g. "
-            "spin_orbit_semiconductors,quantum_2d_materials."
+            "Comma-separated journal-family report groups, e.g. "
+            "aps_core,japan_physics."
         ),
     )
     parser.add_argument("--no-summary", action="store_true", help="Skip LLM-generated bilingual intros.")
