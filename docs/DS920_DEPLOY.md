@@ -134,13 +134,13 @@ Create the tasks in DSM Control Panel > Task Scheduler. Use `root` as the owner.
 
 | Task | Schedule | Command |
 | --- | --- | --- |
-| `Paperbot` | Daily 08:00 | `cd /volume1/docker/paperbot && ./scripts/sync_zotero_pipeline.sh` |
-| `Paperbot-collect` | Daily 08:30 | `cd /volume1/docker/paperbot && ./scripts/collect_paper_watch.sh --lookback-days 7` |
-| `Paperbot-arXiv-report` | Every Monday 09:00 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope arxiv --lookback-days 7 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Weekly arXiv"` |
-| `Paperbot-APS-JP-report` | First Wednesday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aps_core,aps_ext_reviews,japan_physics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly APS/JP"` |
-| `Paperbot-Nature-report` | Second Wednesday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nature_family,broad_high_impact --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nature/High Impact"` |
-| `Paperbot-AIP-Optics-report` | Third Wednesday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aip_family,iop_optics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly AIP/Optics"` |
-| `Paperbot-Nano2D-report` | Fourth Wednesday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nano_2d_materials --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nano/2D"` |
+| `Paperbot` | Daily 01:00 | `cd /volume1/docker/paperbot && ./scripts/sync_zotero_pipeline.sh` |
+| `Paperbot-collect` | Daily 02:00 | `cd /volume1/docker/paperbot && ./scripts/collect_paper_watch.sh --lookback-days 7` |
+| `Paperbot-arXiv-report` | Every Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope arxiv --lookback-days 7 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Weekly arXiv"` |
+| `Paperbot-APS-JP-report` | First Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aps_core,aps_ext_reviews,japan_physics --lookback-days 35 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Monthly APS/JP"` |
+| `Paperbot-Nature-report` | Second Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nature_family,broad_high_impact --lookback-days 35 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Monthly Nature/High Impact"` |
+| `Paperbot-AIP-Optics-report` | Third Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aip_family,iop_optics --lookback-days 35 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Monthly AIP/Optics"` |
+| `Paperbot-Nano2D-report` | Fourth Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nano_2d_materials --lookback-days 35 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Monthly Nano/2D"` |
 
 Immediate Paper Watch alerts are off in production. The daily collection task
 stores metadata, classifications, scores, and expiry timestamps in
@@ -154,9 +154,8 @@ enrichment for recently collected unscored candidates. Set
 without touching the RTX embedding endpoint.
 
 Recommended cadence: collect metadata every day, report arXiv every week, and
-report journal groups monthly. Monthly reports are spread across four
-Wednesdays so the Slack channel stays readable and no single report becomes a
-large digest.
+report journal groups monthly. Monthly reports are spread across four Mondays
+and capped at five papers so the Slack channel stays readable.
 
 Paper Watch groups are intentionally broad but rate-limited. The same group is
 used for metadata collection and Slack reports:

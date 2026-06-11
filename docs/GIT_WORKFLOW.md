@@ -61,9 +61,9 @@ git push personal master
 Push tags for releases:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
-git push personal v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
+git push personal v0.2.0
 ```
 
 ## Deploy Key
@@ -97,7 +97,7 @@ ssh -T github.com-paperbot
 1. Update `CHANGELOG.md`.
 2. Run `make check`.
 3. Commit and push to `origin` and `personal`.
-4. Tag the release, for example `v0.1.0`.
+4. Tag the release, for example `v0.2.0`.
 5. Push tags to both remotes.
 6. Create GitHub Releases for the public mirror and private origin when needed.
 7. Pull the release on DS920+ and redeploy the container.

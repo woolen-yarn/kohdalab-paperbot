@@ -1,6 +1,6 @@
 [project]
 name = "kohdalab-paperbot"
-version = "0.1.0"
+version = "0.2.0"
 description = "DS920+ and local-LLM paper knowledge platform for KohdaLab"
 readme = "README.md"
 requires-python = ">=3.13"
