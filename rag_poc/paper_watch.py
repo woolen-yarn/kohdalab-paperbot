@@ -34,6 +34,7 @@ LAB_PROFILE_PATH = INDEX_DIR / "lab_profile.json"
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 CROSSREF_API_URL = "https://api.crossref.org/works"
 ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
+OPENSEARCH_NS = {"opensearch": "http://a9.com/-/spec/opensearch/1.1/"}
 
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s\"<>]+", re.IGNORECASE)
 
@@ -136,6 +137,84 @@ RSS_CROSSREF_FALLBACKS = {
         "journal": "Applied Physics Letters",
         "query": "spin-orbit spintronics semiconductor Rashba Dresselhaus TRKR",
         "issn": "0003-6951",
+    },
+    "aip_jap": {
+        "group": "aip",
+        "journal": "Journal of Applied Physics",
+        "query": "spin-orbit spintronics semiconductor Rashba Dresselhaus Kerr spectroscopy",
+        "issn": "0021-8979",
+    },
+    "aip_apl_materials": {
+        "group": "aip",
+        "journal": "APL Materials",
+        "query": "spin-orbit spintronics semiconductor two-dimensional materials exciton magnetism",
+        "issn": "2166-532X",
+    },
+    "aip_applied_physics_reviews": {
+        "group": "aip",
+        "journal": "Applied Physics Reviews",
+        "query": "spintronics spin-orbit semiconductor two-dimensional materials optical spectroscopy",
+        "issn": "1931-9401",
+    },
+    "aip_advances": {
+        "group": "aip",
+        "journal": "AIP Advances",
+        "query": "spintronics spin-orbit semiconductor optical spectroscopy two-dimensional materials",
+        "issn": "2158-3226",
+    },
+    "jjap": {
+        "group": "japan",
+        "journal": "Japanese Journal of Applied Physics",
+        "query": "spin-orbit spintronics semiconductor Rashba Dresselhaus time-resolved Kerr",
+        "issn": "1347-4065",
+    },
+    "apex": {
+        "group": "japan",
+        "journal": "Applied Physics Express",
+        "query": "spin-orbit spintronics semiconductor optical spectroscopy Rashba exciton",
+        "issn": "1882-0778",
+    },
+    "jpsj": {
+        "group": "japan",
+        "journal": "Journal of the Physical Society of Japan",
+        "query": "spin-orbit spintronics magnetism magnon semiconductor optical spectroscopy",
+        "issn": "0031-9015",
+    },
+    "stam": {
+        "group": "japan",
+        "journal": "Science and Technology of Advanced Materials",
+        "query": "spintronics semiconductor two-dimensional materials optical spectroscopy magnetism",
+        "issn": "1468-6996",
+    },
+    "npg_asia_materials": {
+        "group": "japan",
+        "journal": "NPG Asia Materials",
+        "query": "spintronics two-dimensional materials semiconductor exciton magnetism photonics",
+        "issn": "1884-4049",
+    },
+    "semicond_sci_technol": {
+        "group": "iop_semiconductor",
+        "journal": "Semiconductor Science and Technology",
+        "query": "spin-orbit semiconductor Rashba Dresselhaus spin diffusion Kerr spectroscopy",
+        "issn": "0268-1242",
+    },
+    "j_phys_d": {
+        "group": "iop_semiconductor",
+        "journal": "Journal of Physics D: Applied Physics",
+        "query": "spintronics spin-orbit semiconductor optical spectroscopy magnetism magnon",
+        "issn": "0022-3727",
+    },
+    "laser_photonics_reviews": {
+        "group": "optics",
+        "journal": "Laser & Photonics Reviews",
+        "query": "optical spectroscopy spin exciton valley semiconductor two-dimensional materials",
+        "issn": "1863-8880",
+    },
+    "optics_letters": {
+        "group": "optics",
+        "journal": "Optics Letters",
+        "query": "time-resolved Kerr optical spectroscopy spin exciton semiconductor photonics",
+        "issn": "0146-9592",
     },
     "prx": {
         "group": "pr_ext",
@@ -532,13 +611,26 @@ def profile_terms() -> dict[str, float]:
     return terms or dict(DEFAULT_TERMS)
 
 
-def arxiv_query(terms: dict[str, float]) -> str:
+def arxiv_date_filter(lookback_days: int) -> str:
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=max(1, lookback_days))
+    return (
+        "submittedDate:"
+        f"[{start.strftime('%Y%m%d%H%M')} TO {now.strftime('%Y%m%d%H%M')}]"
+    )
+
+
+def arxiv_query(terms: dict[str, float], lookback_days: int | None = None) -> str:
     configured = os.environ.get("PAPER_WATCH_ARXIV_QUERY", "").strip()
     if configured:
-        return configured
+        base_query = configured
+    else:
+        core_terms = sorted(terms, key=terms.get, reverse=True)[:18]
+        base_query = " OR ".join(f'all:"{term}"' for term in core_terms)
 
-    core_terms = sorted(terms, key=terms.get, reverse=True)[:18]
-    return " OR ".join(f'all:"{term}"' for term in core_terms)
+    if lookback_days and env_bool("PAPER_WATCH_ARXIV_DATE_FILTER", True):
+        return f"({base_query}) AND {arxiv_date_filter(lookback_days)}"
+    return base_query
 
 
 def paper_watch_sources() -> set[str]:
@@ -592,6 +684,15 @@ def crossref_queries(terms: dict[str, float]) -> list[str]:
     return [query for query in queries if query][:max_queries]
 
 
+def capped_crossref_rows(rows: int) -> int:
+    cap = max(1, env_int("PAPER_WATCH_CROSSREF_MAX_ROWS_PER_QUERY", 100))
+    return max(0, min(rows, cap))
+
+
+def source_stats_enabled() -> bool:
+    return env_bool("PAPER_WATCH_SOURCE_STATS", True)
+
+
 def profile_label(terms: dict[str, float], limit: int = 10) -> str:
     return ", ".join(sorted(terms, key=terms.get, reverse=True)[:limit])
 
@@ -610,6 +711,7 @@ def fetch_arxiv_entries(query: str, max_results: int) -> list[dict]:
         body = res.read()
 
     root = ET.fromstring(body)
+    total_text = root.findtext("opensearch:totalResults", default="", namespaces=OPENSEARCH_NS)
     entries = []
     for entry in root.findall("atom:entry", ATOM_NS):
         url_text = entry.findtext("atom:id", default="", namespaces=ATOM_NS)
@@ -632,6 +734,15 @@ def fetch_arxiv_entries(query: str, max_results: int) -> list[dict]:
                 "updated_at": parse_datetime(entry.findtext("atom:updated", default="", namespaces=ATOM_NS)),
             }
         )
+    if source_stats_enabled():
+        total = int(total_text) if total_text.isdigit() else 0
+        print(f"arXiv query: total={total_text or 'unknown'} fetched={len(entries)} max_results={max_results}")
+        if total and total >= max_results:
+            print(
+                "arXiv query reached max_results; consider increasing "
+                "PAPER_WATCH_MAX_RESULTS or narrowing PAPER_WATCH_ARXIV_QUERY.",
+                file=sys.stderr,
+            )
     return entries
 
 
@@ -708,6 +819,7 @@ def fetch_crossref_entries(
     issn: str = "",
     source_detail: str = "crossref",
 ) -> list[dict]:
+    rows = capped_crossref_rows(rows)
     if not queries or rows <= 0:
         return []
 
@@ -733,10 +845,16 @@ def fetch_crossref_entries(
             continue
 
         items = payload.get("message", {}).get("items", [])
+        before = len(entries)
         for item in items:
             entry = normalize_crossref_item(item, source_detail=source_detail)
             if entry:
                 entries.append(entry)
+        if source_stats_enabled():
+            print(
+                f"Crossref {source_detail}: query={index + 1}/{len(queries)} "
+                f"returned={len(entries) - before} rows={rows}"
+            )
     return entries
 
 
@@ -849,10 +967,18 @@ def fetch_rss_entries(feeds: list[dict], *, max_items_per_feed: int) -> list[dic
             print(f"RSS feed failed: {feed['id']} {exc}", file=sys.stderr)
             continue
 
-        for item in rss_item_elements(root)[:max_items_per_feed]:
+        items = rss_item_elements(root)
+        selected_items = items[:max_items_per_feed]
+        before = len(entries)
+        for item in selected_items:
             entry = normalize_rss_item(item, feed)
             if entry:
                 entries.append(entry)
+        if source_stats_enabled():
+            print(
+                f"RSS {feed['id']}: available={len(items)} used={len(selected_items)} "
+                f"entries={len(entries) - before}"
+            )
     return entries
 
 
@@ -866,26 +992,29 @@ def rss_crossref_fallback_entries(
     if not env_bool("PAPER_WATCH_RSS_CROSSREF_FALLBACK", True):
         return []
 
-    feed_group_by_id = {feed["id"]: feed["group"] for feed in feeds}
-    groups_with_entries = {
-        feed_group_by_id.get(entry.get("source_detail", ""))
+    rss_ids_with_entries = {
+        entry.get("source_detail", "")
         for entry in rss_entries
         if entry.get("source") == "rss"
     }
-    groups_with_entries.discard(None)
+    rss_journals_with_entries = {
+        normalize_title_for_dedupe(entry.get("journal", ""))
+        for entry in rss_entries
+        if entry.get("source") == "rss" and entry.get("journal")
+    }
 
-    rows = env_int("PAPER_WATCH_RSS_CROSSREF_FALLBACK_ROWS", 10)
+    rows = capped_crossref_rows(env_int("PAPER_WATCH_RSS_CROSSREF_FALLBACK_ROWS", 10))
     max_journals = max(0, env_int("PAPER_WATCH_RSS_CROSSREF_FALLBACK_MAX_JOURNALS", 6))
     sleep_seconds = max(0.0, env_float("PAPER_WATCH_CROSSREF_SLEEP_SECONDS", 1.0))
     fallback_entries = []
     fallback_count = 0
     for group in sorted(selected_groups):
-        if group in groups_with_entries:
-            continue
         fallbacks = [
             (fallback_id, fallback)
             for fallback_id, fallback in RSS_CROSSREF_FALLBACKS.items()
             if fallback["group"] == group
+            and fallback_id not in rss_ids_with_entries
+            and normalize_title_for_dedupe(fallback["journal"]) not in rss_journals_with_entries
         ]
         if not fallbacks:
             continue
@@ -895,8 +1024,8 @@ def rss_crossref_fallback_entries(
             break
         selected_fallbacks = fallbacks[:remaining]
         print(
-            f"RSS group {group} had no entries; trying "
-            f"{len(selected_fallbacks)} conservative Crossref fallback journal(s)."
+            f"RSS group {group}: trying {len(selected_fallbacks)} "
+            "conservative Crossref supplement journal(s)."
         )
         for fallback_id, fallback in selected_fallbacks:
             if fallback_count > 0 and sleep_seconds:
@@ -1965,14 +2094,14 @@ def main() -> None:
 
     entries = []
     if "arxiv" in sources:
-        query = arxiv_query(terms)
+        query = arxiv_query(terms, args.lookback_days)
         try:
             entries.extend(fetch_arxiv_entries(query, args.max_results))
         except (urllib.error.URLError, TimeoutError, OSError, ET.ParseError) as exc:
             print(f"arXiv fetch failed; continuing with other sources: {exc}", file=sys.stderr)
 
     if "crossref" in sources:
-        rows = env_int("PAPER_WATCH_CROSSREF_ROWS", 10)
+        rows = capped_crossref_rows(env_int("PAPER_WATCH_CROSSREF_ROWS", 10))
         entries.extend(
             fetch_crossref_entries(
                 crossref_queries(terms),
