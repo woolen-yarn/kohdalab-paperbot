@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.2.0 - 2026-06-11
+
+Production schedule and Paper Watch refinement release.
+
+### Changed
+
+- Updated DSM production schedule to match the deployed NAS tasks:
+  - `Paperbot` daily at 01:00
+  - `Paperbot-collect` daily at 02:00
+  - weekly arXiv report every Monday at 09:30
+  - monthly journal reports staggered across the first through fourth Mondays
+- Capped Paper Watch reports at five papers per report.
+- Unified Paper Watch groups so collection and report groups use the same
+  canonical names.
+- Removed legacy Paper Watch group aliases from the new configuration.
+- Split Paper Watch collection from report posting:
+  - daily collection stores metadata in `paper_watch.sqlite3`
+  - post-collection RAG enrichment updates recent unscored candidates
+  - weekly/monthly report tasks post from stored metadata
+
+### Added
+
+- Additional recommended Paper Watch journals including Communications
+  Materials, npj Spintronics, npj Quantum Materials, APL Quantum, ACS Applied
+  Nano Materials, ACS Applied Electronic Materials, Journal of Materials
+  Chemistry C, and npj 2D Materials and Applications.
+- GitHub badges for CI, MIT license, release, and Python version.
+
 ## v0.1.0 - 2026-06-10
 
 Initial production release for the DS920+ and RTX PC deployment.

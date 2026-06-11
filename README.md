@@ -1,5 +1,10 @@
 # KohdaLab PaperBot
 
+[![CI](https://github.com/woolen-yarn/kohdalab-paperbot/actions/workflows/ci.yml/badge.svg)](https://github.com/woolen-yarn/kohdalab-paperbot/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/woolen-yarn/kohdalab-paperbot?include_prereleases&sort=semver)](https://github.com/woolen-yarn/kohdalab-paperbot/releases)
+[![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](pyproject.toml)
+
 KohdaLab PaperBot is a private lab knowledge platform for papers. It keeps
 Zotero as the source of truth, stores PDFs and a SQLite RAG index on the
 Synology NAS, sends heavy LLM and embedding work to the RTX PC, and exposes the
@@ -29,7 +34,7 @@ flowchart TB
     direction TB
 
     subgraph jobs["Scheduled Jobs"]
-      sync["Paperbot 08:00 daily\nZotero sync + incremental ingest"]
+      sync["Paperbot 01:00 daily\nZotero sync + incremental ingest"]
       watch["Paper Watch weekly/monthly\nrecommend new papers"]
     end
 
@@ -111,13 +116,13 @@ These are the intended Synology DSM Task Scheduler entries. The tasks run as
 
 | DSM task | Timing | Purpose | Command |
 | --- | --- | --- | --- |
-| `Paperbot` | Every day 08:00 | Zotero metadata/PDF sync, incremental RAG ingest, profile rebuild, Slack status notification | `cd /volume1/docker/paperbot && ./scripts/sync_zotero_pipeline.sh` |
-| `Paperbot-collect` | Every day 08:30 | Collect broad paper metadata, then enrich recent candidates with RAG similarity without Slack posts | `cd /volume1/docker/paperbot && ./scripts/collect_paper_watch.sh --lookback-days 7` |
-| `Paperbot-arXiv-report` | Every Monday 09:00 | Weekly arXiv report from stored metadata | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope arxiv --lookback-days 7 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Weekly arXiv"` |
-| `Paperbot-APS-JP-report` | First Wednesday 09:30 | Monthly APS and Japan/applied physics report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aps_core,aps_ext_reviews,japan_physics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly APS/JP"` |
-| `Paperbot-Nature-report` | Second Wednesday 09:30 | Monthly Nature-family and broad high-impact report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nature_family,broad_high_impact --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nature/High Impact"` |
-| `Paperbot-AIP-Optics-report` | Third Wednesday 09:30 | Monthly AIP, IOP, and optics report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aip_family,iop_optics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly AIP/Optics"` |
-| `Paperbot-Nano2D-report` | Fourth Wednesday 09:30 | Monthly nano, 2D materials, and applied materials report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nano_2d_materials --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nano/2D"` |
+| `Paperbot` | Every day 01:00 | Zotero metadata/PDF sync, incremental RAG ingest, profile rebuild, Slack status notification | `cd /volume1/docker/paperbot && ./scripts/sync_zotero_pipeline.sh` |
+| `Paperbot-collect` | Every day 02:00 | Collect broad paper metadata, then enrich recent candidates with RAG similarity without Slack posts | `cd /volume1/docker/paperbot && ./scripts/collect_paper_watch.sh --lookback-days 7` |
+| `Paperbot-arXiv-report` | Every Monday 09:30 | Weekly arXiv report from stored metadata | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope arxiv --lookback-days 7 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Weekly arXiv"` |
+| `Paperbot-APS-JP-report` | First Monday 09:30 | Monthly APS and Japan/applied physics report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aps_core,aps_ext_reviews,japan_physics --lookback-days 35 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Monthly APS/JP"` |
+| `Paperbot-Nature-report` | Second Monday 09:30 | Monthly Nature-family and broad high-impact report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nature_family,broad_high_impact --lookback-days 35 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Monthly Nature/High Impact"` |
+| `Paperbot-AIP-Optics-report` | Third Monday 09:30 | Monthly AIP, IOP, and optics report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aip_family,iop_optics --lookback-days 35 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Monthly AIP/Optics"` |
+| `Paperbot-Nano2D-report` | Fourth Monday 09:30 | Monthly nano, 2D materials, and applied materials report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nano_2d_materials --lookback-days 35 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Monthly Nano/2D"` |
 
 Paper Watch does not send immediate alerts in the production schedule. Daily
 collection stores metadata, structured lab tags, report categories, and scores
@@ -130,9 +135,8 @@ enrichment for recently collected unscored candidates. Set
 without touching the RTX embedding endpoint.
 
 Recommended cadence: collect metadata every day, report arXiv every week, and
-report journal groups monthly. Monthly reports are spread across four
-Wednesdays so the Slack channel stays readable and no single report becomes a
-large digest.
+report journal groups monthly. Monthly reports are spread across four Mondays
+and capped at five papers so the Slack channel stays readable.
 
 ## Deployment
 
@@ -324,7 +328,7 @@ The daily pipeline performs:
 
 ```mermaid
 flowchart TD
-  start["DSM task: Paperbot 08:00"] --> check["Check Ollama embedding endpoint"]
+  start["DSM task: Paperbot 01:00"] --> check["Check Ollama embedding endpoint"]
   check --> zotero["Fetch Zotero metadata"]
   zotero --> dedup["Deduplicate papers\nDOI first, normalized title fallback"]
   dedup --> pdf["Download only missing/changed unique PDFs"]
@@ -431,7 +435,7 @@ credentials.
 
 ## Release
 
-Current release: `v0.1.0`
+Current release: `v0.2.0`
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes.
 

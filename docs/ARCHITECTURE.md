@@ -72,7 +72,7 @@ sequenceDiagram
   participant Ollama as RTX PC Ollama
   participant Slack as Slack paperbot-log
 
-  DSM->>Sync: run daily at 08:00
+  DSM->>Sync: run daily at 01:00
   Sync->>Ollama: verify embedding model
   Sync->>Zotero: fetch changed metadata
   Zotero-->>Sync: papers + attachment metadata
@@ -91,23 +91,27 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-  start["Scheduled Paper Watch"] --> fetch["Fetch candidates\narXiv / RSS / Crossref"]
+  collect["Daily collect task\n02:00"] --> fetch["Fetch metadata\narXiv / RSS / Crossref"]
   fetch --> merge["Merge duplicates\nDOI first, normalized title fallback"]
   merge --> term["Profile term scoring\nmaterials / methods / physics / journals"]
-  term --> rag["RAG similarity scoring\ncandidate abstract vs lab PDF chunks"]
-  rag --> rank["Rank and filter\nmin score + post limit"]
-  rank --> explain["Generate English commentary\ngpt-oss:20b"]
+  term --> db[("paper_watch.sqlite3\nstored candidates")]
+  db --> rag["Post-collection RAG enrichment\ncandidate abstract vs lab PDF chunks"]
+  rag --> db
+
+  report["Weekly/monthly report task\nMonday 09:30"] --> select["Select stored candidates\nscope + min score + post limit 5"]
+  db --> select
+  select --> explain["Generate English commentary\ngpt-oss:20b"]
   explain --> translate["Translate to Japanese\nqwen3:14b"]
   translate --> post["Post compact messages\none paper per Slack post"]
-  post --> seen[("seen_papers\navoid reposts")]
+  post --> db
 
   classDef job fill:#eff6ff,stroke:#2563eb,color:#172554
   classDef ai fill:#ecfdf5,stroke:#059669,color:#064e3b
   classDef data fill:#f8fafc,stroke:#64748b,color:#0f172a
   classDef slack fill:#f5f3ff,stroke:#7c3aed,color:#2e1065
-  class start,fetch,merge,term,rag,rank job
+  class collect,fetch,merge,term,rag,report,select job
   class explain,translate ai
-  class seen data
+  class db data
   class post slack
 ```
 
