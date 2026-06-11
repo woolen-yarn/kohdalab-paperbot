@@ -135,16 +135,17 @@ Create the tasks in DSM Control Panel > Task Scheduler. Use `root` as the owner.
 | Task | Schedule | Command |
 | --- | --- | --- |
 | `Paperbot` | Daily 08:00 | `cd /volume1/docker/paperbot && ./scripts/sync_zotero_pipeline.sh` |
-| `Paperbot-arXiv` | Every Monday 09:00 | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources arxiv` |
-| `Paperbot-PR` | First Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups pr,pr_ext` |
-| `Paperbot-Nature` | Second Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups nature,nature_ext` |
-| `Paperbot-AIP` | Third Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups aip` |
-| `Paperbot-Japan` | Third Monday 10:00 | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups japan,iop_semiconductor,optics` |
-| `Paperbot-Nano` | Fourth Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups nano_2d,broad_high` |
+| `Paperbot-collect` | Daily 08:30 | `cd /volume1/docker/paperbot && ./scripts/collect_paper_watch.sh --lookback-days 7` |
+| `Paperbot-arXiv-report` | Every Monday 09:00 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope arxiv --lookback-days 7 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Weekly arXiv"` |
+| `Paperbot-PR-report` | First Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups pr,pr_ext --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly PR"` |
+| `Paperbot-Nature-report` | Second Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups nature,nature_ext --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nature"` |
+| `Paperbot-AIP-report` | Third Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups aip --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly AIP"` |
+| `Paperbot-Japan-report` | Third Monday 10:00 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups japan,iop_semiconductor,optics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Japan/Applied Physics"` |
+| `Paperbot-Nano-report` | Fourth Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups nano_2d,broad_high --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nano/High Impact"` |
 
-The weekly/monthly split keeps publisher access light and makes Slack posts
-easier to read. Paper Watch posts one Slack message per selected paper. If a
-run selects five papers, Slack should receive five separate messages.
+Immediate Paper Watch alerts are off in production. The daily collection task
+stores metadata in SQLite and does not post to Slack. Weekly and monthly report
+tasks select stored papers and post one Slack message per selected paper.
 
 Journal groups are intentionally broad but rate-limited:
 
@@ -165,29 +166,29 @@ jobs are staggered by week.
 
 ## 6. Manual Paper Watch
 
-Dry run arXiv:
+Dry run daily metadata collection:
 
 ```bash
 cd /volume1/docker/paperbot
-sudo ./scripts/run_paper_watch.sh --dry-run --sources arxiv --post-limit 3
+sudo ./scripts/collect_paper_watch.sh --dry-run --sources arxiv --lookback-days 7
 ```
 
-Post one test paper:
+Dry run the weekly arXiv report:
 
 ```bash
-sudo ./scripts/run_paper_watch.sh --sources arxiv --post-limit 1 --min-score 0
+sudo ./scripts/report_paper_watch.sh --dry-run --report-scope arxiv --lookback-days 7 --post-limit 3
 ```
 
-Dry run a journal group:
+Dry run a monthly journal report:
 
 ```bash
-sudo ./scripts/run_paper_watch.sh --dry-run --sources rss --rss-groups pr,pr_ext --no-summary
+sudo ./scripts/report_paper_watch.sh --dry-run --report-scope journals --rss-groups pr,pr_ext --lookback-days 35 --post-limit 3
 ```
 
-Dry run the Japanese/applied physics group:
+Immediate fetch-and-post mode is retained for manual debugging only:
 
 ```bash
-sudo ./scripts/run_paper_watch.sh --dry-run --sources rss --rss-groups japan,iop_semiconductor,optics --no-summary
+sudo ./scripts/run_paper_watch.sh --mode run --sources arxiv --post-limit 1 --min-score 0
 ```
 
 Inspect the current Zotero journal distribution in the NAS SQLite database:
