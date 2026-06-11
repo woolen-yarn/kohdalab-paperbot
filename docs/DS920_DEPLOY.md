@@ -137,15 +137,15 @@ Create the tasks in DSM Control Panel > Task Scheduler. Use `root` as the owner.
 | `Paperbot` | Daily 08:00 | `cd /volume1/docker/paperbot && ./scripts/sync_zotero_pipeline.sh` |
 | `Paperbot-collect` | Daily 08:30 | `cd /volume1/docker/paperbot && ./scripts/collect_paper_watch.sh --lookback-days 7` |
 | `Paperbot-arXiv-report` | Every Monday 09:00 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope arxiv --lookback-days 7 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Weekly arXiv"` |
-| `Paperbot-PR-report` | First Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups pr,pr_ext --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly PR"` |
-| `Paperbot-Nature-report` | Second Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups nature,nature_ext --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nature"` |
-| `Paperbot-AIP-report` | Third Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups aip --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly AIP"` |
-| `Paperbot-Japan-report` | Third Monday 10:00 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups japan,iop_semiconductor,optics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Japan/Applied Physics"` |
-| `Paperbot-Nano-report` | Fourth Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --rss-groups nano_2d,broad_high --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Nano/High Impact"` |
+| `Paperbot-Mon-report` | First Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups spin_orbit_semiconductors,japan_applied_physics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Spin/JP"` |
+| `Paperbot-Wed-report` | First Wednesday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups quantum_2d_materials,optical_spectroscopy_photonics --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly 2D/Optics"` |
+| `Paperbot-Fri-report` | First Friday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups magnetism_magnonics,devices_applied,high_impact_general,reviews_perspectives --lookback-days 35 --post-limit 8 --min-score 4.5 --report-title "Paper Watch Monthly Mag/Device"` |
 
 Immediate Paper Watch alerts are off in production. The daily collection task
-stores metadata in SQLite and does not post to Slack. Weekly and monthly report
-tasks select stored papers and post one Slack message per selected paper.
+stores metadata, classifications, scores, and expiry timestamps in
+`rag_poc/index/paper_watch.sqlite3` and does not post to Slack. Weekly and
+monthly report tasks select stored papers and post one Slack message per
+selected paper.
 
 Journal groups are intentionally broad but rate-limited:
 
@@ -163,6 +163,19 @@ Journal groups are intentionally broad but rate-limited:
 The default access policy is conservative: arXiv uses a submitted-date window,
 Crossref requests include `mailto`, rows are capped per request, and journal
 jobs are staggered by week.
+
+Refined monthly report groups:
+
+| Report group | Use |
+| --- | --- |
+| `spin_orbit_semiconductors` | PSH, Rashba/Dresselhaus, 2DEG, spin diffusion, III-V quantum wells |
+| `optical_spectroscopy_photonics` | TRKR, Kerr, transient grating, PL, excitons, structured light |
+| `quantum_2d_materials` | TMDs, CrSBr, GaTe/GaSe, Janus materials, van der Waals systems |
+| `magnetism_magnonics` | magnets, spin waves, magnons, spin Hall, spin torque, altermagnets |
+| `devices_applied` | devices, switching, interfaces, heterostructures, applied materials |
+| `high_impact_general` | broad Nature/Science/Advanced/PNAS style papers |
+| `japan_applied_physics` | JJAP, APEX, JPSJ, STAM, NPG Asia Materials |
+| `reviews_perspectives` | reviews, perspectives, roadmaps, tutorials, outlook papers |
 
 ## 6. Manual Paper Watch
 
@@ -182,7 +195,7 @@ sudo ./scripts/report_paper_watch.sh --dry-run --report-scope arxiv --lookback-d
 Dry run a monthly journal report:
 
 ```bash
-sudo ./scripts/report_paper_watch.sh --dry-run --report-scope journals --rss-groups pr,pr_ext --lookback-days 35 --post-limit 3
+sudo ./scripts/report_paper_watch.sh --dry-run --report-scope journals --report-groups spin_orbit_semiconductors,japan_applied_physics --lookback-days 35 --post-limit 3
 ```
 
 Immediate fetch-and-post mode is retained for manual debugging only:
@@ -255,6 +268,7 @@ Do not commit runtime data.
 | `.env` | Slack, Zotero, and runtime secrets |
 | `rag_poc/papers/zotero/` | downloaded Zotero PDFs |
 | `rag_poc/index/chunks.sqlite3` | SQLite RAG database |
+| `rag_poc/index/paper_watch.sqlite3` | external paper metadata, classifications, scores, and report state |
 | `rag_poc/index/lab_profile.md` | generated interest profile |
 | `logs/` | sync and Paper Watch logs |
 
