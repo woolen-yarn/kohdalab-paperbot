@@ -139,11 +139,29 @@ Create the tasks in DSM Control Panel > Task Scheduler. Use `root` as the owner.
 | `Paperbot-PR` | First Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups pr,pr_ext` |
 | `Paperbot-Nature` | Second Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups nature,nature_ext` |
 | `Paperbot-AIP` | Third Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups aip` |
+| `Paperbot-Japan` | Third Monday 10:00 | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups japan,iop_semiconductor,optics` |
 | `Paperbot-Nano` | Fourth Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups nano_2d,broad_high` |
 
 The weekly/monthly split keeps publisher access light and makes Slack posts
 easier to read. Paper Watch posts one Slack message per selected paper. If a
 run selects five papers, Slack should receive five separate messages.
+
+Journal groups are intentionally broad but rate-limited:
+
+| Group | Main sources |
+| --- | --- |
+| `pr` / `pr_ext` | Physical Review family |
+| `nature` / `nature_ext` | Nature Physics, Nature Communications, Communications Physics, and related Nature journals |
+| `aip` | Applied Physics Letters, Journal of Applied Physics, APL Materials, Applied Physics Reviews, AIP Advances |
+| `japan` | JJAP, Applied Physics Express, JPSJ, STAM, NPG Asia Materials |
+| `iop_semiconductor` | Semiconductor Science and Technology, Journal of Physics D |
+| `optics` | Laser & Photonics Reviews, Optics Letters |
+| `nano_2d` | Nano Letters, ACS Nano, ACS Photonics, 2D Materials, npj 2D Materials and Applications |
+| `broad_high` | Advanced Science, Advanced Materials, Science Advances, PNAS, Cell Reports Physical Science |
+
+The default access policy is conservative: arXiv uses a submitted-date window,
+Crossref requests include `mailto`, rows are capped per request, and journal
+jobs are staggered by week.
 
 ## 6. Manual Paper Watch
 
@@ -164,6 +182,31 @@ Dry run a journal group:
 
 ```bash
 sudo ./scripts/run_paper_watch.sh --dry-run --sources rss --rss-groups pr,pr_ext --no-summary
+```
+
+Dry run the Japanese/applied physics group:
+
+```bash
+sudo ./scripts/run_paper_watch.sh --dry-run --sources rss --rss-groups japan,iop_semiconductor,optics --no-summary
+```
+
+Inspect the current Zotero journal distribution in the NAS SQLite database:
+
+```bash
+sudo docker compose -f docker-compose.nas.yml run --rm paperbot \
+  python - <<'PY'
+import sqlite3
+
+conn = sqlite3.connect('/app/rag_poc/index/chunks.sqlite3')
+for row in conn.execute("""
+    SELECT COALESCE(NULLIF(journal, ''), '(unknown)') AS journal, COUNT(*) AS n
+    FROM unique_papers
+    GROUP BY journal
+    ORDER BY n DESC
+    LIMIT 50
+"""):
+    print(f"{row[1]:4d}  {row[0]}")
+PY
 ```
 
 ## 7. Logs

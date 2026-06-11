@@ -116,6 +116,7 @@ These are the intended Synology DSM Task Scheduler entries. The tasks run as
 | `Paperbot-PR` | First Monday 09:30 | Monthly APS Physical Review watch | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups pr,pr_ext` |
 | `Paperbot-Nature` | Second Monday 09:30 | Monthly Nature-family watch | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups nature,nature_ext` |
 | `Paperbot-AIP` | Third Monday 09:30 | Monthly AIP / Applied Physics Letters watch | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups aip` |
+| `Paperbot-Japan` | Third Monday 10:00 | Monthly Japanese/applied physics watch | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups japan,iop_semiconductor,optics` |
 | `Paperbot-Nano` | Fourth Monday 09:30 | Monthly nano, 2D materials, and broad high-impact watch | `cd /volume1/docker/paperbot && ./scripts/run_paper_watch.sh --sources rss --rss-groups nano_2d,broad_high` |
 
 The staggered monthly jobs keep publisher access conservative and prevent Slack
@@ -224,9 +225,23 @@ Default source groups:
 | `pr_ext` | PRX, PRX Quantum, PRX Energy, RMP |
 | `nature` | Nature Physics, Nature Communications, Communications Physics |
 | `nature_ext` | Nature Materials, Nature Nanotechnology, Nature Photonics, Nature Electronics, Nature Reviews Materials |
-| `aip` | Applied Physics Letters and related AIP journals |
+| `aip` | Applied Physics Letters, Journal of Applied Physics, APL Materials, Applied Physics Reviews, AIP Advances |
+| `japan` | Japanese Journal of Applied Physics, Applied Physics Express, JPSJ, STAM, NPG Asia Materials |
+| `iop_semiconductor` | Semiconductor Science and Technology, Journal of Physics D |
+| `optics` | Laser & Photonics Reviews, Optics Letters |
 | `nano_2d` | Nano Letters, ACS Nano, ACS Photonics, 2D Materials, npj 2D Materials and Applications |
 | `broad_high` | Advanced Science, Advanced Materials, Science Advances, PNAS, Cell Reports Physical Science |
+
+Access policy:
+
+- arXiv is queried with a submitted-date window by default, so weekly runs only
+  ask for recent matches.
+- arXiv requests stay below the 2,000-result slice size and normally use one
+  request per run.
+- Crossref requests include `mailto`, sleep between queries, clamp rows per
+  request, and stop/back off on 4XX or 429 responses.
+- RSS is used where it works; Crossref ISSN-filtered journal supplements cover
+  feeds that are missing, blocked, or too short.
 
 Manual dry run:
 
@@ -244,6 +259,26 @@ Run a journal group without summaries:
 
 ```bash
 sudo ./scripts/run_paper_watch.sh --dry-run --sources rss --rss-groups nature,nature_ext --no-summary
+```
+
+Inspect which journals are actually common in the current Zotero-backed SQLite
+database:
+
+```bash
+sudo docker compose -f docker-compose.nas.yml run --rm paperbot \
+  python - <<'PY'
+import sqlite3
+
+conn = sqlite3.connect('/app/rag_poc/index/chunks.sqlite3')
+for journal, count in conn.execute("""
+    SELECT COALESCE(NULLIF(journal, ''), '(unknown)') AS journal, COUNT(*) AS n
+    FROM unique_papers
+    GROUP BY journal
+    ORDER BY n DESC
+    LIMIT 50
+"""):
+    print(f"{count:4d}  {journal}")
+PY
 ```
 
 ## Zotero Sync and RAG Ingest
