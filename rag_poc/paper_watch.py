@@ -125,6 +125,30 @@ DEFAULT_RSS_FEEDS = [
         "url": "https://www.nature.com/nphoton.rss",
     },
     {
+        "id": "communications_materials",
+        "group": "nature_ext",
+        "journal": "Communications Materials",
+        "url": "https://www.nature.com/commsmat.rss",
+    },
+    {
+        "id": "npj_spintronics",
+        "group": "nature_ext",
+        "journal": "npj Spintronics",
+        "url": "https://www.nature.com/npjspintronics.rss",
+    },
+    {
+        "id": "npj_quantum_materials",
+        "group": "nature_ext",
+        "journal": "npj Quantum Materials",
+        "url": "https://www.nature.com/npjquantmats.rss",
+    },
+    {
+        "id": "npj_2d_materials",
+        "group": "nano_2d",
+        "journal": "npj 2D Materials and Applications",
+        "url": "https://www.nature.com/npj2dmaterials.rss",
+    },
+    {
         "id": "aip_apl",
         "group": "aip",
         "journal": "Applied Physics Letters",
@@ -162,6 +186,12 @@ RSS_CROSSREF_FALLBACKS = {
         "journal": "AIP Advances",
         "query": "spintronics spin-orbit semiconductor optical spectroscopy two-dimensional materials",
         "issn": "2158-3226",
+    },
+    "apl_quantum": {
+        "group": "aip",
+        "journal": "APL Quantum",
+        "query": "quantum materials spin photonics semiconductor optical spectroscopy quantum device",
+        "issn": "2835-0103",
     },
     "jjap": {
         "group": "japan",
@@ -271,6 +301,30 @@ RSS_CROSSREF_FALLBACKS = {
         "query": "two-dimensional semiconductor spin-orbit exciton valley magnetism",
         "issn": "2053-1583",
     },
+    "npj_2d_materials": {
+        "group": "nano_2d",
+        "journal": "npj 2D Materials and Applications",
+        "query": "two-dimensional materials spintronics exciton valley magnetism photonics",
+        "issn": "2397-7132",
+    },
+    "acs_applied_nano_materials": {
+        "group": "nano_2d",
+        "journal": "ACS Applied Nano Materials",
+        "query": "two-dimensional nanomaterials spin exciton valley optical semiconductor",
+        "issn": "2574-0970",
+    },
+    "acs_applied_electronic_materials": {
+        "group": "nano_2d",
+        "journal": "ACS Applied Electronic Materials",
+        "query": "electronic materials semiconductor spintronics photonics two-dimensional materials",
+        "issn": "2637-6113",
+    },
+    "journal_materials_chemistry_c": {
+        "group": "nano_2d",
+        "journal": "Journal of Materials Chemistry C",
+        "query": "optical magnetic electronic materials spin exciton semiconductor photonics",
+        "issn": "2050-7534",
+    },
     "science_advances": {
         "group": "broad_high",
         "journal": "Science Advances",
@@ -288,6 +342,24 @@ RSS_CROSSREF_FALLBACKS = {
         "journal": "Advanced Science",
         "query": "spin-orbit spintronics two-dimensional materials exciton valley magnetism",
         "issn": "2198-3844",
+    },
+    "communications_materials": {
+        "group": "nature_ext",
+        "journal": "Communications Materials",
+        "query": "spintronics quantum materials two-dimensional materials optical spectroscopy magnetism",
+        "issn": "2662-4443",
+    },
+    "npj_spintronics": {
+        "group": "nature_ext",
+        "journal": "npj Spintronics",
+        "query": "spintronics spin transport spin-orbit magnonics magnetic materials semiconductor",
+        "issn": "2948-2119",
+    },
+    "npj_quantum_materials": {
+        "group": "nature_ext",
+        "journal": "npj Quantum Materials",
+        "query": "quantum materials spin-orbit magnetism two-dimensional materials optical spectroscopy",
+        "issn": "2397-4648",
     },
 }
 
@@ -366,11 +438,12 @@ REPORT_GROUP_KEYWORDS = {
     "nature_family": [
         "nature physics", "nature communications", "communications physics",
         "nature materials", "nature nanotechnology", "nature photonics",
-        "nature electronics",
+        "nature electronics", "communications materials", "npj spintronics",
+        "npj quantum materials",
     ],
     "aip_family": [
         "applied physics letters", "journal of applied physics",
-        "apl materials", "applied physics reviews", "aip advances",
+        "apl materials", "apl quantum", "applied physics reviews", "aip advances",
     ],
     "japan_physics": [
         "japanese journal of applied physics", "applied physics express",
@@ -383,7 +456,8 @@ REPORT_GROUP_KEYWORDS = {
     ],
     "nano_2d_materials": [
         "nano letters", "acs nano", "acs photonics", "acs applied materials",
-        "2d materials", "npj 2d materials",
+        "acs applied nano materials", "acs applied electronic materials",
+        "journal of materials chemistry c", "2d materials", "npj 2d materials",
     ],
     "broad_high_impact": [
         "advanced science", "advanced materials", "science advances",
