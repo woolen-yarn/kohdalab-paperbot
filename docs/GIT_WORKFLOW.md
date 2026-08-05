@@ -114,6 +114,8 @@ ssh -T github.com
 7. Push the identical tag to both remotes.
 8. Create GitHub Releases for the private origin and public mirror.
 9. Pull `origin/master` on DS920+, rebuild, and verify Slack/RAG health.
+10. Dry-run and apply `--mode rescore --lookback-days 180`; retain its automatic
+    SQLite backup until the first scheduled reports are verified.
 
 ## Branch Policy
 

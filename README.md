@@ -294,6 +294,19 @@ Dry run only the post-collection RAG enrichment step:
 sudo ./scripts/run_paper_watch.sh --mode rag --dry-run --lookback-days 7
 ```
 
+Preview and then apply the current scoring model to existing unposted rows:
+
+```bash
+sudo ./scripts/run_paper_watch.sh --mode rescore --lookback-days 180 --dry-run
+sudo ./scripts/run_paper_watch.sh --mode rescore --lookback-days 180
+```
+
+The write run creates a timestamped SQLite backup beside
+`paper_watch.sqlite3`. Posted history is preserved unless `--include-posted` is
+explicitly supplied. Rescoring updates existing score fields only and does not
+change the database schema. RAG rescoring is all-or-nothing: an Ollama or index
+failure aborts before any score is written.
+
 Dry run the weekly arXiv report from stored metadata:
 
 ```bash

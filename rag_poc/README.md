@@ -84,6 +84,11 @@ sudo ./scripts/run_paper_watch.sh --dry-run --sources arxiv --post-limit 3
 sudo ./scripts/run_paper_watch.sh --dry-run --sources rss --rss-groups nature_family --no-summary
 ```
 
+`--mode rescore` reapplies the current profile and scoring implementation to
+existing unposted rows. It creates a timestamped SQLite backup before writing,
+does not migrate the schema, and can include posted history only with the
+explicit `--include-posted` flag.
+
 The default Slack output is compact:
 
 - title

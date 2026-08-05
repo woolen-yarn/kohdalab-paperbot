@@ -14,6 +14,8 @@ First stable release of the KohdaLab DS920+ and RTX PaperBot platform.
 - Automatic lab-profile regeneration after successful RAG ingest.
 - Profile-derived author, journal, term, and theme-combination priorities.
 - Unit tests for scoring, profile sampling, and live RAG-index reload behavior.
+- Backup-first `rescore` mode for applying the v1.0 scoring model to existing
+  active Paper Watch rows without a schema migration.
 
 ### Changed
 

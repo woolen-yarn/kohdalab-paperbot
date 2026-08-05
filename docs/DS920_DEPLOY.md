@@ -203,6 +203,20 @@ Dry run only the post-collection RAG enrichment step:
 sudo ./scripts/run_paper_watch.sh --mode rag --dry-run --lookback-days 7
 ```
 
+After deploying a scoring-model update, preview and rescore active stored rows:
+
+```bash
+sudo ./scripts/run_paper_watch.sh --mode rescore --lookback-days 180 --dry-run
+sudo ./scripts/run_paper_watch.sh --mode rescore --lookback-days 180
+```
+
+The second command creates
+`rag_poc/index/paper_watch.sqlite3.backup-YYYYMMDDTHHMMSSZ` before updating
+existing score, reason, and RAG fields. It does not alter the schema and leaves
+already-posted history unchanged. Use `--include-posted` only when historical
+scores also need to be rewritten. RAG rescoring aborts before writing anything
+if any embedding request or reference-index read fails.
+
 Dry run the weekly arXiv report:
 
 ```bash

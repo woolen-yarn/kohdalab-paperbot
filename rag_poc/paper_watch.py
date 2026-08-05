@@ -1907,6 +1907,8 @@ def apply_rag_scores(
     conn: sqlite3.Connection,
     *,
     enabled: bool,
+    candidate_limit_override: int | None = None,
+    strict: bool = False,
 ) -> None:
     for entry in entries:
         entry.setdefault("term_score", entry.get("score", 0.0))
@@ -1925,10 +1927,16 @@ def apply_rag_scores(
         chunks_per_source=env_int("PAPER_WATCH_RAG_CHUNKS_PER_SOURCE", 6),
     )
     if not reference_chunks:
+        if strict:
+            raise RuntimeError("Paper Watch RAG rescore requires indexed PDF chunks.")
         print("Paper Watch RAG score skipped: no indexed PDF chunks found.")
         return
 
-    candidate_limit = env_int("PAPER_WATCH_RAG_CANDIDATE_LIMIT", 30)
+    candidate_limit = (
+        max(0, candidate_limit_override)
+        if candidate_limit_override is not None
+        else env_int("PAPER_WATCH_RAG_CANDIDATE_LIMIT", 30)
+    )
     min_term_score = env_float("PAPER_WATCH_RAG_MIN_TERM_SCORE", 1.0)
     top_papers = max(1, min(3, env_int("PAPER_WATCH_RAG_TOP_PAPERS", 3)))
     fixed_rag_floor = env_float("PAPER_WATCH_RAG_FLOOR", 0.75)
@@ -1955,6 +1963,10 @@ def apply_rag_scores(
                 timeout=180,
             )
         except OllamaError as exc:
+            if strict:
+                raise RuntimeError(
+                    f"Paper Watch RAG rescore failed for {entry['external_id']}: {exc}"
+                ) from exc
             print(
                 f"Paper Watch RAG score failed for {entry['external_id']}: {exc}",
                 file=sys.stderr,
@@ -2015,18 +2027,44 @@ def apply_rag_scores(
             entry["rag_page_end"] = nearest["page_end"]
 
 
-def apply_rag_scores_from_lab_db(entries: list[dict], *, enabled: bool) -> None:
+def apply_rag_scores_from_lab_db(
+    entries: list[dict],
+    *,
+    enabled: bool,
+    candidate_limit_override: int | None = None,
+    strict: bool = False,
+) -> None:
     if not enabled:
         with sqlite3.connect(":memory:") as conn:
-            apply_rag_scores(entries, conn, enabled=False)
+            apply_rag_scores(
+                entries,
+                conn,
+                enabled=False,
+                candidate_limit_override=candidate_limit_override,
+                strict=strict,
+            )
         return
     if not INDEX_DB_PATH.exists():
+        if strict:
+            raise RuntimeError(f"Paper Watch RAG DB not found: {INDEX_DB_PATH}")
         print("Paper Watch RAG score skipped: lab RAG DB not found.")
         with sqlite3.connect(":memory:") as conn:
-            apply_rag_scores(entries, conn, enabled=False)
+            apply_rag_scores(
+                entries,
+                conn,
+                enabled=False,
+                candidate_limit_override=candidate_limit_override,
+                strict=strict,
+            )
         return
     with sqlite3.connect(INDEX_DB_PATH) as conn:
-        apply_rag_scores(entries, conn, enabled=True)
+        apply_rag_scores(
+            entries,
+            conn,
+            enabled=True,
+            candidate_limit_override=candidate_limit_override,
+            strict=strict,
+        )
 
 
 def cleanup_expired_items(conn: sqlite3.Connection) -> int:
@@ -2567,6 +2605,90 @@ def update_rag_scores(conn: sqlite3.Connection, items: list[dict]) -> int:
         )
         updated += 1
     return updated
+
+
+def select_rescore_candidates(
+    conn: sqlite3.Connection,
+    *,
+    lookback_days: int,
+    include_posted: bool,
+    limit: int = 0,
+) -> list[dict]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, lookback_days))
+    cutoff_text = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+    posted_filter = "" if include_posted else "AND posted_at IS NULL"
+    limit_clause = "LIMIT ?" if limit > 0 else ""
+    params: tuple = (cutoff_text, limit) if limit > 0 else (cutoff_text,)
+    metadata_by_source = load_lab_metadata_by_source()
+    rows = conn.execute(
+        f"""
+        SELECT source, external_id, title, authors_json, summary, url,
+               published_at, score, reasons_json,
+               term_score, rag_score, rag_source, rag_page_start, rag_page_end,
+               doi, dedupe_key, title_key, source_detail, journal,
+               source_group, report_group, paper_type, classification_json
+        FROM paper_watch_items
+        WHERE first_seen_at >= ?
+          {posted_filter}
+        ORDER BY first_seen_at DESC, published_at DESC
+        {limit_clause}
+        """,
+        params,
+    ).fetchall()
+    return [row_to_watch_item(row, metadata_by_source) for row in rows]
+
+
+def prepare_items_for_rescore(items: list[dict], terms: dict[str, float]) -> None:
+    for item in items:
+        components, reasons = score_components(item, terms)
+        item["term_score"] = components["keyword"] + components["combo"]
+        item["score"] = normalized_final_score(components, 0.0)
+        item["reasons"] = reasons
+        item["rag_score"] = 0.0
+        item["rag_source"] = ""
+        item["rag_source_label"] = ""
+        item["rag_page_start"] = None
+        item["rag_page_end"] = None
+
+
+def update_rescored_items(conn: sqlite3.Connection, items: list[dict]) -> int:
+    conn.executemany(
+        """
+        UPDATE paper_watch_items
+        SET score = ?,
+            reasons_json = ?,
+            term_score = ?,
+            rag_score = ?,
+            rag_source = ?,
+            rag_page_start = ?,
+            rag_page_end = ?
+        WHERE source = ?
+          AND external_id = ?
+        """,
+        [
+            (
+                item.get("score", 0.0),
+                json.dumps(item.get("reasons", []), ensure_ascii=False),
+                item.get("term_score", 0.0),
+                item.get("rag_score", 0.0),
+                item.get("rag_source") or None,
+                item.get("rag_page_start"),
+                item.get("rag_page_end"),
+                item["source"],
+                item["external_id"],
+            )
+            for item in items
+        ],
+    )
+    return len(items)
+
+
+def backup_database(conn: sqlite3.Connection, path: Path) -> Path:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = path.with_name(f"{path.name}.backup-{timestamp}")
+    with sqlite3.connect(backup_path) as backup_conn:
+        conn.backup(backup_conn)
+    return backup_path
 
 
 def selected_report_groups(args: argparse.Namespace) -> set[str]:
@@ -3271,11 +3393,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Find and post relevant new papers.")
     parser.add_argument(
         "--mode",
-        choices=["collect", "rag", "report", "run"],
+        choices=["collect", "rag", "rescore", "report", "run"],
         default=os.environ.get("PAPER_WATCH_MODE", "run"),
         help=(
             "collect stores metadata and scores without Slack posts; "
             "rag enriches recently collected DB rows with lab RAG similarity; "
+            "rescore recalculates existing DB rows with the current profile and scoring; "
             "report posts from stored items; run fetches and posts immediately."
         ),
     )
@@ -3322,6 +3445,22 @@ def parse_args() -> argparse.Namespace:
         "--no-rag-score",
         action="store_true",
         help="Disable abstract-to-RAG-index similarity scoring.",
+    )
+    parser.add_argument(
+        "--include-posted",
+        action="store_true",
+        help="With --mode rescore, also update rows that were already posted.",
+    )
+    parser.add_argument(
+        "--rescore-limit",
+        type=int,
+        default=env_int("PAPER_WATCH_RESCORE_LIMIT", 0),
+        help="Maximum rows for --mode rescore; 0 means all rows in the lookback window.",
+    )
+    parser.add_argument(
+        "--no-db-backup",
+        action="store_true",
+        help="With --mode rescore, skip the default timestamped SQLite backup.",
     )
     return parser.parse_args()
 
@@ -3483,6 +3622,55 @@ def rag_mode(args: argparse.Namespace) -> None:
         conn.close()
 
 
+def rescore_mode(args: argparse.Namespace, terms: dict[str, float]) -> None:
+    db_path = paper_watch_db_path()
+    conn = init_db(db_path)
+    try:
+        conn.commit()
+        candidates = select_rescore_candidates(
+            conn,
+            lookback_days=args.lookback_days,
+            include_posted=args.include_posted,
+            limit=max(0, args.rescore_limit),
+        )
+        if not candidates:
+            mode_label = "rescore dry-run" if args.dry_run else "rescore"
+            print(f"Paper Watch {mode_label}: candidates=0 updated=0")
+            return
+        prepare_items_for_rescore(candidates, terms)
+        apply_rag_scores_from_lab_db(
+            candidates,
+            enabled=not args.no_rag_score,
+            candidate_limit_override=len(candidates),
+            strict=not args.no_rag_score,
+        )
+        scores = [float(item.get("score", 0.0)) for item in candidates]
+        score_range = (
+            f"min={min(scores):.1f} max={max(scores):.1f}"
+            if scores
+            else "min=n/a max=n/a"
+        )
+        if args.dry_run:
+            print(
+                "Paper Watch rescore dry-run: "
+                f"candidates={len(candidates)} {score_range} db_write=false"
+            )
+            return
+        backup_path = None
+        if not args.no_db_backup:
+            backup_path = backup_database(conn, db_path)
+        updated_count = update_rescored_items(conn, candidates)
+        conn.commit()
+        print(
+            "Paper Watch rescore: "
+            f"candidates={len(candidates)} updated={updated_count} {score_range} "
+            f"include_posted={str(args.include_posted).lower()} "
+            f"backup={backup_path or 'disabled'} db={db_path}"
+        )
+    finally:
+        conn.close()
+
+
 def report_mode(args: argparse.Namespace) -> None:
     conn = init_db(paper_watch_db_path())
     try:
@@ -3601,6 +3789,8 @@ def main() -> None:
         collect_mode(args, terms)
     elif args.mode == "rag":
         rag_mode(args)
+    elif args.mode == "rescore":
+        rescore_mode(args, terms)
     elif args.mode == "report":
         report_mode(args)
     else:
