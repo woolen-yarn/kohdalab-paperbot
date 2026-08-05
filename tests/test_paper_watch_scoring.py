@@ -127,6 +127,29 @@ class PaperWatchScoringTests(unittest.TestCase):
         self.assertAlmostEqual(floor, 0.809)
         self.assertAlmostEqual(ceiling, 0.8855)
 
+    def test_blended_calibration_keeps_absolute_and_relative_signal(self):
+        scores = paper_watch.blended_rag_scores(
+            [0.80, 0.85],
+            fixed_floor=0.75,
+            fixed_ceiling=0.90,
+            adaptive_floor=0.80,
+            adaptive_ceiling=0.85,
+            adaptive_weight=0.35,
+        )
+
+        self.assertAlmostEqual(scores[0], 0.65 * (1 / 3))
+        self.assertAlmostEqual(scores[1], 0.65 * (2 / 3) + 0.35)
+
+    def test_chunk_unit_embedding_is_cached(self):
+        chunk = {"embedding": [3.0, 4.0]}
+
+        first = paper_watch.chunk_unit_embedding(chunk)
+        chunk["embedding"] = [0.0, 0.0]
+        second = paper_watch.chunk_unit_embedding(chunk)
+
+        self.assertIs(first, second)
+        self.assertEqual(first, (0.6, 0.8))
+
 
 if __name__ == "__main__":
     unittest.main()

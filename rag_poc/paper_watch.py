@@ -20,9 +20,9 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 try:
-    from .ollama_client import OllamaError, embed, generate
+    from .ollama_client import OllamaError, embed_many, generate
 except ImportError:
-    from ollama_client import OllamaError, embed, generate
+    from ollama_client import OllamaError, embed_many, generate
 
 
 ROOT = Path(__file__).resolve().parent
@@ -1614,6 +1614,25 @@ def cosine(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
+def unit_vector(vector: list[float]) -> tuple[float, ...]:
+    norm = math.sqrt(sum(value * value for value in vector))
+    if norm == 0:
+        return tuple(0.0 for _ in vector)
+    return tuple(value / norm for value in vector)
+
+
+def unit_dot(a: tuple[float, ...], b: tuple[float, ...]) -> float:
+    return sum(x * y for x, y in zip(a, b))
+
+
+def chunk_unit_embedding(chunk: dict) -> tuple[float, ...]:
+    cached = chunk.get("_unit_embedding")
+    if cached is None:
+        cached = unit_vector(chunk["embedding"])
+        chunk["_unit_embedding"] = cached
+    return cached
+
+
 def parse_authors(authors_json: str) -> list[str]:
     try:
         authors = json.loads(authors_json or "[]")
@@ -1695,7 +1714,7 @@ def load_rag_reference_chunks(
     if max_chunks <= 0 or chunks_per_source <= 0:
         return []
 
-    metadata_by_source = load_lab_metadata_by_source()
+    metadata_by_source = load_metadata_by_source(conn)
     try:
         rows = conn.execute(
             """
@@ -1725,6 +1744,7 @@ def load_rag_reference_chunks(
                 "page_end": page_end,
                 "text": text,
                 "embedding": vector,
+                "_unit_embedding": unit_vector(vector),
             }
         )
     chunks = []
@@ -1748,7 +1768,7 @@ def select_diverse_chunks(chunks: list[dict], limit: int) -> list[dict]:
         next_chunk = min(
             remaining,
             key=lambda candidate: max(
-                cosine(candidate["embedding"], chosen["embedding"])
+                unit_dot(chunk_unit_embedding(candidate), chunk_unit_embedding(chosen))
                 for chosen in selected
             ),
         )
@@ -1764,9 +1784,10 @@ def best_rag_matches(
     top_papers: int = 3,
     weights: tuple[float, ...] = RAG_PAPER_WEIGHTS,
 ) -> tuple[float, list[dict]]:
+    query_unit = unit_vector(query_vector)
     best_by_source: dict[str, tuple[float, dict]] = {}
     for chunk in chunks:
-        score = cosine(query_vector, chunk["embedding"])
+        score = unit_dot(query_unit, chunk_unit_embedding(chunk))
         current = best_by_source.get(chunk["source"])
         if current is None or score > current[0]:
             best_by_source[chunk["source"]] = (score, chunk)
@@ -1788,11 +1809,14 @@ def combine_title_abstract_matches(
     top_papers: int = 3,
     weights: tuple[float, ...] = RAG_PAPER_WEIGHTS,
 ) -> tuple[float, list[dict]]:
+    title_unit = unit_vector(title_vector)
+    abstract_unit = unit_vector(abstract_vector)
     best_by_source: dict[str, dict] = {}
     for chunk in chunks:
         source = chunk["source"]
-        title_score = cosine(title_vector, chunk["embedding"])
-        abstract_score = cosine(abstract_vector, chunk["embedding"])
+        chunk_unit = chunk_unit_embedding(chunk)
+        title_score = unit_dot(title_unit, chunk_unit)
+        abstract_score = unit_dot(abstract_unit, chunk_unit)
         current = best_by_source.get(source)
         if current is None:
             current = {
@@ -1859,11 +1883,32 @@ def adaptive_rag_bounds(
     return floor, ceiling
 
 
+def blended_rag_scores(
+    scores: list[float],
+    *,
+    fixed_floor: float,
+    fixed_ceiling: float,
+    adaptive_floor: float,
+    adaptive_ceiling: float,
+    adaptive_weight: float,
+) -> list[float]:
+    weight = min(max(adaptive_weight, 0.0), 1.0)
+    return [
+        (1.0 - weight)
+        * calibrate_rag_score(score, floor=fixed_floor, ceiling=fixed_ceiling)
+        + weight
+        * calibrate_rag_score(score, floor=adaptive_floor, ceiling=adaptive_ceiling)
+        for score in scores
+    ]
+
+
 def apply_rag_scores(
     entries: list[dict],
     conn: sqlite3.Connection,
     *,
     enabled: bool,
+    candidate_limit_override: int | None = None,
+    strict: bool = False,
 ) -> None:
     for entry in entries:
         entry.setdefault("term_score", entry.get("score", 0.0))
@@ -1882,14 +1927,20 @@ def apply_rag_scores(
         chunks_per_source=env_int("PAPER_WATCH_RAG_CHUNKS_PER_SOURCE", 6),
     )
     if not reference_chunks:
+        if strict:
+            raise RuntimeError("Paper Watch RAG rescore requires indexed PDF chunks.")
         print("Paper Watch RAG score skipped: no indexed PDF chunks found.")
         return
 
-    candidate_limit = env_int("PAPER_WATCH_RAG_CANDIDATE_LIMIT", 30)
+    candidate_limit = (
+        max(0, candidate_limit_override)
+        if candidate_limit_override is not None
+        else env_int("PAPER_WATCH_RAG_CANDIDATE_LIMIT", 30)
+    )
     min_term_score = env_float("PAPER_WATCH_RAG_MIN_TERM_SCORE", 1.0)
     top_papers = max(1, min(3, env_int("PAPER_WATCH_RAG_TOP_PAPERS", 3)))
-    rag_floor = env_float("PAPER_WATCH_RAG_FLOOR", 0.75)
-    rag_ceiling = env_float("PAPER_WATCH_RAG_CEILING", 0.90)
+    fixed_rag_floor = env_float("PAPER_WATCH_RAG_FLOOR", 0.75)
+    fixed_rag_ceiling = env_float("PAPER_WATCH_RAG_CEILING", 0.90)
     model = paper_watch_embed_model()
     terms = profile_terms()
 
@@ -1906,9 +1957,16 @@ def apply_rag_scores(
         try:
             title_text = compact_whitespace(entry.get("title", ""))
             abstract_text = compact_whitespace(entry.get("summary", "")) or title_text
-            title_vector = embed(title_text, model, timeout=180)
-            abstract_vector = embed(abstract_text, model, timeout=180)
+            title_vector, abstract_vector = embed_many(
+                [title_text, abstract_text],
+                model,
+                timeout=180,
+            )
         except OllamaError as exc:
+            if strict:
+                raise RuntimeError(
+                    f"Paper Watch RAG rescore failed for {entry['external_id']}: {exc}"
+                ) from exc
             print(
                 f"Paper Watch RAG score failed for {entry['external_id']}: {exc}",
                 file=sys.stderr,
@@ -1923,26 +1981,40 @@ def apply_rag_scores(
         )
         raw_results.append((entry, raw_rag_score, matches))
 
+    raw_scores = [result[1] for result in raw_results]
+    adaptive_rag_floor = fixed_rag_floor
+    adaptive_rag_ceiling = fixed_rag_ceiling
+    adaptive_weight = 0.0
     if env_bool("PAPER_WATCH_RAG_ADAPTIVE_CALIBRATION", True):
-        rag_floor, rag_ceiling = adaptive_rag_bounds(
-            [result[1] for result in raw_results],
-            fallback_floor=rag_floor,
-            fallback_ceiling=rag_ceiling,
+        adaptive_rag_floor, adaptive_rag_ceiling = adaptive_rag_bounds(
+            raw_scores,
+            fallback_floor=fixed_rag_floor,
+            fallback_ceiling=fixed_rag_ceiling,
             min_candidates=max(3, env_int("PAPER_WATCH_RAG_ADAPTIVE_MIN_CANDIDATES", 10)),
             min_span=max(0.001, env_float("PAPER_WATCH_RAG_ADAPTIVE_MIN_SPAN", 0.03)),
         )
+        if (adaptive_rag_floor, adaptive_rag_ceiling) != (
+            fixed_rag_floor,
+            fixed_rag_ceiling,
+        ):
+            adaptive_weight = env_float("PAPER_WATCH_RAG_ADAPTIVE_WEIGHT", 0.35)
+    calibrated_scores = blended_rag_scores(
+        raw_scores,
+        fixed_floor=fixed_rag_floor,
+        fixed_ceiling=fixed_rag_ceiling,
+        adaptive_floor=adaptive_rag_floor,
+        adaptive_ceiling=adaptive_rag_ceiling,
+        adaptive_weight=adaptive_weight,
+    )
     if raw_results:
         print(
             "Paper Watch RAG calibration: "
-            f"floor={rag_floor:.3f} ceiling={rag_ceiling:.3f} candidates={len(raw_results)}"
+            f"fixed={fixed_rag_floor:.3f}-{fixed_rag_ceiling:.3f} "
+            f"adaptive={adaptive_rag_floor:.3f}-{adaptive_rag_ceiling:.3f} "
+            f"weight={adaptive_weight:.2f} candidates={len(raw_results)}"
         )
 
-    for entry, raw_rag_score, matches in raw_results:
-        rag_score = calibrate_rag_score(
-            raw_rag_score,
-            floor=rag_floor,
-            ceiling=rag_ceiling,
-        )
+    for (entry, raw_rag_score, matches), rag_score in zip(raw_results, calibrated_scores):
         entry["rag_raw_score"] = raw_rag_score
         entry["rag_score"] = rag_score
         components, _ = score_components(entry, terms)
@@ -1955,18 +2027,44 @@ def apply_rag_scores(
             entry["rag_page_end"] = nearest["page_end"]
 
 
-def apply_rag_scores_from_lab_db(entries: list[dict], *, enabled: bool) -> None:
+def apply_rag_scores_from_lab_db(
+    entries: list[dict],
+    *,
+    enabled: bool,
+    candidate_limit_override: int | None = None,
+    strict: bool = False,
+) -> None:
     if not enabled:
         with sqlite3.connect(":memory:") as conn:
-            apply_rag_scores(entries, conn, enabled=False)
+            apply_rag_scores(
+                entries,
+                conn,
+                enabled=False,
+                candidate_limit_override=candidate_limit_override,
+                strict=strict,
+            )
         return
     if not INDEX_DB_PATH.exists():
+        if strict:
+            raise RuntimeError(f"Paper Watch RAG DB not found: {INDEX_DB_PATH}")
         print("Paper Watch RAG score skipped: lab RAG DB not found.")
         with sqlite3.connect(":memory:") as conn:
-            apply_rag_scores(entries, conn, enabled=False)
+            apply_rag_scores(
+                entries,
+                conn,
+                enabled=False,
+                candidate_limit_override=candidate_limit_override,
+                strict=strict,
+            )
         return
     with sqlite3.connect(INDEX_DB_PATH) as conn:
-        apply_rag_scores(entries, conn, enabled=True)
+        apply_rag_scores(
+            entries,
+            conn,
+            enabled=True,
+            candidate_limit_override=candidate_limit_override,
+            strict=strict,
+        )
 
 
 def cleanup_expired_items(conn: sqlite3.Connection) -> int:
@@ -2507,6 +2605,90 @@ def update_rag_scores(conn: sqlite3.Connection, items: list[dict]) -> int:
         )
         updated += 1
     return updated
+
+
+def select_rescore_candidates(
+    conn: sqlite3.Connection,
+    *,
+    lookback_days: int,
+    include_posted: bool,
+    limit: int = 0,
+) -> list[dict]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, lookback_days))
+    cutoff_text = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+    posted_filter = "" if include_posted else "AND posted_at IS NULL"
+    limit_clause = "LIMIT ?" if limit > 0 else ""
+    params: tuple = (cutoff_text, limit) if limit > 0 else (cutoff_text,)
+    metadata_by_source = load_lab_metadata_by_source()
+    rows = conn.execute(
+        f"""
+        SELECT source, external_id, title, authors_json, summary, url,
+               published_at, score, reasons_json,
+               term_score, rag_score, rag_source, rag_page_start, rag_page_end,
+               doi, dedupe_key, title_key, source_detail, journal,
+               source_group, report_group, paper_type, classification_json
+        FROM paper_watch_items
+        WHERE first_seen_at >= ?
+          {posted_filter}
+        ORDER BY first_seen_at DESC, published_at DESC
+        {limit_clause}
+        """,
+        params,
+    ).fetchall()
+    return [row_to_watch_item(row, metadata_by_source) for row in rows]
+
+
+def prepare_items_for_rescore(items: list[dict], terms: dict[str, float]) -> None:
+    for item in items:
+        components, reasons = score_components(item, terms)
+        item["term_score"] = components["keyword"] + components["combo"]
+        item["score"] = normalized_final_score(components, 0.0)
+        item["reasons"] = reasons
+        item["rag_score"] = 0.0
+        item["rag_source"] = ""
+        item["rag_source_label"] = ""
+        item["rag_page_start"] = None
+        item["rag_page_end"] = None
+
+
+def update_rescored_items(conn: sqlite3.Connection, items: list[dict]) -> int:
+    conn.executemany(
+        """
+        UPDATE paper_watch_items
+        SET score = ?,
+            reasons_json = ?,
+            term_score = ?,
+            rag_score = ?,
+            rag_source = ?,
+            rag_page_start = ?,
+            rag_page_end = ?
+        WHERE source = ?
+          AND external_id = ?
+        """,
+        [
+            (
+                item.get("score", 0.0),
+                json.dumps(item.get("reasons", []), ensure_ascii=False),
+                item.get("term_score", 0.0),
+                item.get("rag_score", 0.0),
+                item.get("rag_source") or None,
+                item.get("rag_page_start"),
+                item.get("rag_page_end"),
+                item["source"],
+                item["external_id"],
+            )
+            for item in items
+        ],
+    )
+    return len(items)
+
+
+def backup_database(conn: sqlite3.Connection, path: Path) -> Path:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = path.with_name(f"{path.name}.backup-{timestamp}")
+    with sqlite3.connect(backup_path) as backup_conn:
+        conn.backup(backup_conn)
+    return backup_path
 
 
 def selected_report_groups(args: argparse.Namespace) -> set[str]:
@@ -3211,11 +3393,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Find and post relevant new papers.")
     parser.add_argument(
         "--mode",
-        choices=["collect", "rag", "report", "run"],
+        choices=["collect", "rag", "rescore", "report", "run"],
         default=os.environ.get("PAPER_WATCH_MODE", "run"),
         help=(
             "collect stores metadata and scores without Slack posts; "
             "rag enriches recently collected DB rows with lab RAG similarity; "
+            "rescore recalculates existing DB rows with the current profile and scoring; "
             "report posts from stored items; run fetches and posts immediately."
         ),
     )
@@ -3262,6 +3445,22 @@ def parse_args() -> argparse.Namespace:
         "--no-rag-score",
         action="store_true",
         help="Disable abstract-to-RAG-index similarity scoring.",
+    )
+    parser.add_argument(
+        "--include-posted",
+        action="store_true",
+        help="With --mode rescore, also update rows that were already posted.",
+    )
+    parser.add_argument(
+        "--rescore-limit",
+        type=int,
+        default=env_int("PAPER_WATCH_RESCORE_LIMIT", 0),
+        help="Maximum rows for --mode rescore; 0 means all rows in the lookback window.",
+    )
+    parser.add_argument(
+        "--no-db-backup",
+        action="store_true",
+        help="With --mode rescore, skip the default timestamped SQLite backup.",
     )
     return parser.parse_args()
 
@@ -3423,6 +3622,55 @@ def rag_mode(args: argparse.Namespace) -> None:
         conn.close()
 
 
+def rescore_mode(args: argparse.Namespace, terms: dict[str, float]) -> None:
+    db_path = paper_watch_db_path()
+    conn = init_db(db_path)
+    try:
+        conn.commit()
+        candidates = select_rescore_candidates(
+            conn,
+            lookback_days=args.lookback_days,
+            include_posted=args.include_posted,
+            limit=max(0, args.rescore_limit),
+        )
+        if not candidates:
+            mode_label = "rescore dry-run" if args.dry_run else "rescore"
+            print(f"Paper Watch {mode_label}: candidates=0 updated=0")
+            return
+        prepare_items_for_rescore(candidates, terms)
+        apply_rag_scores_from_lab_db(
+            candidates,
+            enabled=not args.no_rag_score,
+            candidate_limit_override=len(candidates),
+            strict=not args.no_rag_score,
+        )
+        scores = [float(item.get("score", 0.0)) for item in candidates]
+        score_range = (
+            f"min={min(scores):.1f} max={max(scores):.1f}"
+            if scores
+            else "min=n/a max=n/a"
+        )
+        if args.dry_run:
+            print(
+                "Paper Watch rescore dry-run: "
+                f"candidates={len(candidates)} {score_range} db_write=false"
+            )
+            return
+        backup_path = None
+        if not args.no_db_backup:
+            backup_path = backup_database(conn, db_path)
+        updated_count = update_rescored_items(conn, candidates)
+        conn.commit()
+        print(
+            "Paper Watch rescore: "
+            f"candidates={len(candidates)} updated={updated_count} {score_range} "
+            f"include_posted={str(args.include_posted).lower()} "
+            f"backup={backup_path or 'disabled'} db={db_path}"
+        )
+    finally:
+        conn.close()
+
+
 def report_mode(args: argparse.Namespace) -> None:
     conn = init_db(paper_watch_db_path())
     try:
@@ -3541,6 +3789,8 @@ def main() -> None:
         collect_mode(args, terms)
     elif args.mode == "rag":
         rag_mode(args)
+    elif args.mode == "rescore":
+        rescore_mode(args, terms)
     elif args.mode == "report":
         report_mode(args)
     else:

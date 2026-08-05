@@ -50,20 +50,29 @@ sudo REBUILD=1 ./scripts/sync_zotero_pipeline.sh
 From a development workstation:
 
 ```bash
+git switch master
+git pull --ff-only origin master
+git switch -c codex/describe-change
 git status
 make check
 git add README.md docs rag_poc scripts bot.py pyproject.toml
 git commit -m "Describe the change"
-git push origin master
-git push personal master
+git push -u origin codex/describe-change
+git push -u personal codex/describe-change
 ```
 
-Push tags for releases:
+Open pull requests from the same branch to `master` in both repositories. Do
+not push feature or release changes directly to `master`.
+
+After both release PRs are reviewed and merged, tag the shared reviewed branch
+head so the same tag identifies the same source commit in both repositories:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
-git push personal v0.2.0
+git switch codex/prepare-v1-release
+make check
+git tag -a v1.0.0 -m "KohdaLab PaperBot v1.0.0"
+git push origin v1.0.0
+git push personal v1.0.0
 ```
 
 ## Deploy Key
@@ -94,13 +103,19 @@ ssh -T github.com
 
 ## Release Checklist
 
-1. Update `CHANGELOG.md`.
-2. Run `make check`.
-3. Commit and push to `origin` and `personal`.
-4. Tag the release, for example `v0.2.0`.
-5. Push tags to both remotes.
-6. Create GitHub Releases for the public mirror and private origin when needed.
-7. Pull the release on DS920+ and redeploy the container.
+1. Set the version in `pyproject.toml` and replace `Unreleased` in
+   `CHANGELOG.md` with the release date.
+2. Run `make check` and the NAS Docker Compose smoke check.
+3. Commit the release candidate and push the same branch to `origin` and
+   `personal`.
+4. Open PRs to `master` in both repositories and wait for CI/review.
+5. Merge both PRs and verify their source trees are identical.
+6. Create the annotated tag on the shared reviewed branch-head commit.
+7. Push the identical tag to both remotes.
+8. Create GitHub Releases for the private origin and public mirror.
+9. Pull `origin/master` on DS920+, rebuild, and verify Slack/RAG health.
+10. Dry-run and apply `--mode rescore --lookback-days 180`; retain its automatic
+    SQLite backup until the first scheduled reports are verified.
 
 ## Branch Policy
 

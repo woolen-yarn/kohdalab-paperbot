@@ -137,9 +137,9 @@ without touching the RTX embedding endpoint.
 Recommendation scores use a 0--100 scale. Keyword synonyms contribute only the
 strongest match in each concept group, title matches receive 1.5x weight, and
 additional keyword concepts receive diminishing weight. RAG aggregates the best
-match from each of the top three distinct lab PDFs and uses 10th/95th percentile
-calibration when a candidate batch is large enough. Profile-derived authors and
-journals contribute small, capped bonuses.
+match from each of the top three distinct lab PDFs. Large candidate batches blend
+65% fixed calibration with 35% 10th/95th-percentile relative calibration.
+Profile-derived authors and journals contribute small, capped bonuses.
 
 Recommended cadence: collect metadata every day, report arXiv every week, and
 report journal groups monthly. Monthly reports are spread across four Mondays
@@ -294,6 +294,19 @@ Dry run only the post-collection RAG enrichment step:
 sudo ./scripts/run_paper_watch.sh --mode rag --dry-run --lookback-days 7
 ```
 
+Preview and then apply the current scoring model to existing unposted rows:
+
+```bash
+sudo ./scripts/run_paper_watch.sh --mode rescore --lookback-days 180 --dry-run
+sudo ./scripts/run_paper_watch.sh --mode rescore --lookback-days 180
+```
+
+The write run creates a timestamped SQLite backup beside
+`paper_watch.sqlite3`. Posted history is preserved unless `--include-posted` is
+explicitly supplied. Rescoring updates existing score fields only and does not
+change the database schema. RAG rescoring is all-or-nothing: an Ollama or index
+failure aborts before any score is written.
+
 Dry run the weekly arXiv report from stored metadata:
 
 ```bash
@@ -447,6 +460,8 @@ credentials.
 ## Release
 
 Current release: `v0.2.0`
+
+Next planned release: `v1.0.0`
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes.
 

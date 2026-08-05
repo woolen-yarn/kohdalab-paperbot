@@ -1,5 +1,46 @@
 # Changelog
 
+## v1.0.0 - Unreleased
+
+First stable release of the KohdaLab DS920+ and RTX PaperBot platform.
+
+### Added
+
+- Multi-paper RAG scoring using the strongest representative chunk from each of
+  the top three distinct indexed lab papers.
+- Separate title and abstract embeddings with calibrated 0--100 recommendation
+  scores.
+- Adaptive RAG calibration blended with a stable absolute baseline.
+- Automatic lab-profile regeneration after successful RAG ingest.
+- Profile-derived author, journal, term, and theme-combination priorities.
+- Unit tests for scoring, profile sampling, and live RAG-index reload behavior.
+- Backup-first `rescore` mode for applying the v1.0 scoring model to existing
+  active Paper Watch rows without a schema migration.
+
+### Changed
+
+- Added synonym grouping, title weighting, and diminishing returns for keyword
+  concepts to reduce keyword stuffing and double counting.
+- Selected semantically diverse reference chunks from across each indexed PDF.
+- Cached normalized chunk embeddings to reduce repeated vector normalization.
+- Batched each candidate's title and abstract into one Ollama embedding request.
+- Streamed profile chunk sampling instead of retaining all chunk text in memory.
+- Made unit tests part of the default CI check.
+- Changed the default report threshold to 45 on the 0--100 scale.
+
+### Fixed
+
+- Removed scheduled restarts of the always-on Slack container. The bot now
+  reloads the SQLite RAG index when its modification time changes.
+- Prevented Synology from reporting the routine scheduled refresh as an
+  unexpected `kohdalab-paperbot` container stop.
+
+### Compatibility
+
+- No Paper Watch database schema migration is required.
+- Existing runtime databases, PDFs, `.env`, and scheduled metadata remain local
+  to the NAS and are not included in the release.
+
 ## v0.2.0 - 2026-06-11
 
 Production schedule and Paper Watch refinement release.
