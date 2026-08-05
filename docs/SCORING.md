@@ -1,28 +1,28 @@
-# Paper Watchスコアリング仕様
+# Paper Watch Scoring
 
-Paper Watchは、候補論文と研究室の研究内容との関連度を0〜100点で表します。単一のキーワードや単一のPDFだけに依存せず、重要語、研究テーマ、複数論文との意味的類似度、著者、雑誌を組み合わせます。
+Paper Watch expresses the relevance of each candidate paper to the lab's research on a scale from 0 to 100. It combines important terms, research themes, semantic similarity to multiple lab papers, authors, and journals instead of relying on one keyword or one reference PDF.
 
-## 最終スコア
+## Final Score
 
-最終スコア`S`は次の式で計算します。
+The final score `S` is:
 
 \[
 S = 45K + 35R + 10C + 5A + 5J
 \]
 
-各成分は0〜1へ正規化されるため、最終スコアは0〜100の範囲になります。
+Every component is normalized to the range from 0 to 1, so the final score remains between 0 and 100.
 
-| 成分 | 正規化 | 最終スコアへの最大寄与 |
+| Component | Normalization | Maximum contribution |
 | --- | --- | ---: |
-| 重要語`K` | `min(keyword / 30, 1)` | 45点 |
-| RAG`R` | 補正後の類似度を0〜1へ制限 | 35点 |
-| テーマ組み合わせ`C` | `min(combo / 6, 1)` | 10点 |
-| 優先著者`A` | `min(author / 5, 1)` | 5点 |
-| 優先雑誌`J` | 0〜1へ制限 | 5点 |
+| Keyword relevance `K` | `min(keyword / 30, 1)` | 45 |
+| RAG relevance `R` | calibrated and clamped to 0–1 | 35 |
+| Theme combinations `C` | `min(combo / 6, 1)` | 10 |
+| Priority author `A` | `min(author / 5, 1)` | 5 |
+| Priority journal `J` | clamped to 0–1 | 5 |
 
-## Termスコア
+## Term Score
 
-DBの`term_score`は、重要語スコアとテーマ組み合わせスコアを合計した生の判定値です。
+The `term_score` stored in the database is a raw eligibility signal. It combines keyword relevance and theme-combination bonuses:
 
 \[
 \text{Term Score}
@@ -31,24 +31,24 @@ DBの`term_score`は、重要語スコアとテーマ組み合わせスコアを
 + \min\left(\sum_j b_j, 6\right)
 \]
 
-- `m_i`：一致した概念の寄与
-- `d`：追加概念の逓減率。既定値は`0.85`
-- `P`：ネガティブプロファイルによる減点
-- `b_j`：テーマ組み合わせの加点
+- `m_i` is the contribution of a matched concept.
+- `d` is the diminishing-return factor, `0.85` by default.
+- `P` is the negative-profile penalty.
+- `b_j` is a matched theme-combination bonus.
 
-`term_score`自体には30点の上限がありません。ただし最終スコアへ入る重要語成分は、30点で正規化上限に達します。
+The raw `term_score` has no upper bound of 30. Only its keyword component reaches the normalized maximum used by the final score at 30.
 
-### 重要語の一致
+### Keyword Matches
 
-各語には重みがあります。
+Every keyword has a weight:
 
-- タイトルに一致：`重み × 1.5`
-- 要旨だけに一致：`重み × 1.0`
-- タイトルと要旨の両方に一致：タイトル側の寄与を採用
+- Title match: `weight × 1.5`
+- Abstract-only match: `weight × 1.0`
+- Match in both title and abstract: use the title contribution
 
-組み込み語の例は次のとおりです。
+Examples of built-in terms are:
 
-| 語 | 重み |
+| Term | Weight |
 | --- | ---: |
 | `persistent spin helix` | 9 |
 | `spin helix` | 7 |
@@ -62,145 +62,145 @@ DBの`term_score`は、重要語スコアとテーマ組み合わせスコアを
 | `wse2` / `ws2` | 3 |
 | `gaas` / `ingaas` | 2 |
 
-### 同義語グループ
+### Synonym Groups
 
-同じ概念の表記違いを重複加点しません。例えば`spin-orbit`、`spin orbit`、`spin-orbit coupling`、`SOC`、`SOI`は1グループです。グループ内で最も大きい寄与だけを使います。
+Different spellings of one concept do not receive duplicate credit. For example, `spin-orbit`, `spin orbit`, `spin-orbit coupling`, `SOC`, and `SOI` belong to one group. Only the strongest contribution within the group is retained.
 
-PSH、TRKR、2DEG、2D磁性体、スピン励起子にも同様のグループがあります。研究室プロファイルから得た語のうち、定義済みグループに含まれないものは独立した概念として扱います。
+PSH, TRKR, 2DEG, two-dimensional magnetism, and spin excitons have similar groups. Profile-derived terms that are not in a predefined group remain independent concepts.
 
-### 逓減
+### Diminishing Returns
 
-一致した概念を寄与の大きい順に並べ、2番目以降を`0.85`倍ずつ弱めます。
+Matched concepts are ordered by contribution. Each concept after the first is multiplied by another factor of `0.85`.
 
-例えば寄与が`9, 6, 4, 3`なら、重要語部分は次のようになります。
+For contributions of `9, 6, 4, 3`, the keyword score is:
 
 \[
 9 + 6(0.85) + 4(0.85^2) + 3(0.85^3) = 18.84
 \]
 
-これにより、多数の語が偶然含まれる論文やキーワードの詰め込みが過大評価されにくくなります。逓減率は`PAPER_WATCH_KEYWORD_DECAY`で変更できます。
+This limits over-scoring from incidental keyword density. `PAPER_WATCH_KEYWORD_DECAY` controls the decay factor.
 
-### 研究室プロファイル
+### Lab Profile
 
-RAG取り込みが成功すると、登録済みPDFから次のファイルを再生成します。
+Every successful RAG ingest regenerates:
 
 ```text
 rag_poc/index/lab_profile.json
 rag_poc/index/lab_profile.md
 ```
 
-通常は、組み込み語に`lab_profile.json`の`weighted_terms`を最大80語追加します。同じ語がある場合は高い方の重みを使います。
+By default, Paper Watch combines the built-in terms with up to 80 `weighted_terms` from `lab_profile.json`. When the same term appears in both sources, the higher weight wins.
 
-`PAPER_WATCH_TERMS`を設定した場合は、組み込み語と自動生成語を使わず、その指定内容で全面的に置き換えます。通常運用では未設定のまま、自動生成プロファイルを使うことを推奨します。
+Setting `PAPER_WATCH_TERMS` replaces both the built-in and generated terms completely. Normal production should leave it unset and use the generated lab profile.
 
-### テーマ組み合わせ
+### Theme Combinations
 
-`core_themes`と`theme_combinations`には、次のカテゴリごとの語が入ります。
+The `core_themes` and `theme_combinations` profile sections organize terms into:
 
-- 材料
-- 手法
-- 物理
-- 応用
+- materials
+- methods
+- physics
+- applications
 
-候補論文が異なる2カテゴリ以上に一致したとき、テーマの重みを加点します。既定では1テーマ最大4点、組み合わせ全体で最大6点です。
+A candidate receives a theme bonus when it matches at least two different categories in one rule. By default, each rule contributes at most 4 raw points and the combined theme score is capped at 6.
 
-### ネガティブプロファイル
+### Negative Profile
 
-`negative_profile`に登録された周辺的な語がタイトルまたは要旨に含まれると、その重みを重要語部分から減点します。減点後の重要語スコアは0未満になりません。
+Terms in `negative_profile` subtract their weights from keyword relevance when they appear in the title or abstract. Keyword relevance cannot fall below zero.
 
-## RAGスコア
+## RAG Score
 
-RAGスコアは、候補論文と研究室PDFの意味的な近さを測ります。
+The RAG score measures semantic similarity between a candidate and the lab's indexed PDFs.
 
-### 1. 参照チャンクの選択
+### 1. Reference-Chunk Selection
 
-各PDFから既定で最大6チャンクを選びます。先頭だけに偏らないよう、すでに選んだチャンクとの意味的重複が小さいチャンクを順に追加します。全体では既定で最大8,000チャンクを読み込みます。
+Paper Watch selects up to six chunks per PDF by default. It starts with one chunk, then adds chunks with low semantic overlap with those already selected. This gives broader coverage than taking only leading pages. At most 8,000 reference chunks are loaded by default.
 
-### 2. タイトルと要旨の埋め込み
+### 2. Title and Abstract Embeddings
 
-候補論文のタイトルと要旨を別々に埋め込みます。各研究室PDFについて、タイトルに最も近いチャンクと要旨に最も近いチャンクを探し、次の比率でまとめます。
+The title and abstract are embedded separately. For each lab PDF, Paper Watch finds the best title match and the best abstract match, then combines them as:
 
 \[
 q_p = 0.35 \times \text{title similarity}
     + 0.65 \times \text{abstract similarity}
 \]
 
-### 3. 複数論文の集約
+### 3. Multi-Paper Aggregation
 
-各PDFから得た`q_p`を高い順に並べ、上位3論文を次の重みで集約します。
+The per-PDF values `q_p` are sorted, and the top three distinct papers are aggregated:
 
 \[
 R_{raw} = 0.6q_1 + 0.3q_2 + 0.1q_3
 \]
 
-同じPDFの複数チャンクが上位を独占しないため、複数の研究室論文に共通する関連性を評価できます。
+Only one score from each PDF contributes, so several chunks from one paper cannot occupy all top positions.
 
-### 4. 類似度の補正
+### 4. Calibration
 
-生の類似度は、既定で`0.75`を0、`0.90`を1とする固定基準へ変換します。
+The fixed calibration maps a raw similarity of `0.75` to 0 and `0.90` to 1 by default.
 
-候補が10件以上ある場合は、その集合の10パーセンタイルと95パーセンタイルから相対基準も作ります。最終的なRAG成分は、固定基準65%と相対基準35%を混ぜます。
+When at least ten candidates are available, Paper Watch also creates adaptive bounds from the 10th and 95th percentiles of the current batch. The final RAG component blends 65% fixed calibration with 35% adaptive calibration.
 
-この方式により、実行ごとの順位差を表現しつつ、別の日に計算したスコアとの比較可能性も保ちます。候補数や分布が不十分な場合は固定基準だけを使います。
+This preserves cross-run comparability while still representing useful differences within one candidate batch. Paper Watch uses only fixed calibration when the batch size or score spread is insufficient.
 
-## 著者と雑誌
+## Authors and Journals
 
-優先著者と優先雑誌は、`lab_profile.json`の出現傾向と`.env`の明示設定から作ります。同じ著者・雑誌に複数の値がある場合は高い方を採用します。
+Author and journal priorities come from both `lab_profile.json` and explicit `.env` settings. If several values apply to one author or journal, the highest value wins.
 
-- 著者成分：最大5点分
-- 雑誌成分：最大5点分
-- 著者が複数一致しても最大の1名分だけを採用
-- 雑誌が複数の表記に一致しても最大値だけを採用
+- Author contribution: up to 5 final points
+- Journal contribution: up to 5 final points
+- If several authors match, only the largest author priority contributes
+- If several journal labels match, only the largest journal priority contributes
 
-明示設定には`PAPER_WATCH_PRIORITY_AUTHORS`と`PAPER_WATCH_PRIORITY_JOURNALS`を使います。
+Explicit settings use `PAPER_WATCH_PRIORITY_AUTHORS` and `PAPER_WATCH_PRIORITY_JOURNALS`.
 
-## DBに保存する値
+## Stored Database Values
 
-`paper_watch.sqlite3`の主なスコア列は次のとおりです。
+The primary scoring columns in `paper_watch.sqlite3` are:
 
-| 列 | 内容 |
+| Column | Meaning |
 | --- | --- |
-| `score` | 0〜100の最終スコア |
-| `term_score` | 重要語とテーマ組み合わせの生スコア |
-| `rag_score` | 0〜1へ補正したRAGスコア |
-| `reasons_json` | 一致語、テーマ、減点理由 |
-| `rag_source` | 最も近かった研究室PDF |
-| `rag_page_start` / `rag_page_end` | 代表チャンクのページ |
+| `score` | Final score from 0 to 100 |
+| `term_score` | Raw keyword and theme-combination score |
+| `rag_score` | Calibrated RAG score from 0 to 1 |
+| `reasons_json` | Matched terms, themes, and penalties |
+| `rag_source` | Closest indexed lab PDF |
+| `rag_page_start` / `rag_page_end` | Page range of the representative chunk |
 
-`term_score`と`score`は尺度が異なります。例えば`term_score`が30を超えても、最終スコアの重要語部分は最大45点です。
+`term_score` and `score` use different scales. A `term_score` above 30 is valid, while the keyword contribution to the final score is capped at 45 points.
 
-## 既存データの再計算
+## Rescoring Existing Data
 
-現在の実装とプロファイルを既存行へ適用する場合は、最初に書き込みなしで確認します。
+Preview and apply the current implementation and profile to existing records:
 
 ```bash
 sudo ./scripts/run_paper_watch.sh --mode rescore --lookback-days 180 --dry-run
 sudo ./scripts/run_paper_watch.sh --mode rescore --lookback-days 180
 ```
 
-書き込み実行には次の安全策があります。
+The write operation provides these safeguards:
 
-- 更新前にSQLiteバックアップを自動作成する
-- DBスキーマを変更しない
-- 既定では未投稿行だけを対象にする
-- RAGインデックスまたはOllamaに問題があれば、DBへ書き込む前に中止する
-- `posted_at`、`updated_at`、`first_seen_at`、`last_seen_at`を変更しない
+- Creates a timestamped SQLite backup before updating records
+- Does not change the database schema
+- Targets unposted records by default
+- Aborts before any write if the RAG index or Ollama request fails
+- Preserves `posted_at`, `updated_at`, `first_seen_at`, and `last_seen_at`
 
-投稿済み履歴も再計算する場合だけ`--include-posted`を追加します。
+Add `--include-posted` only when posted history must also be rescored.
 
-## 主な設定値
+## Main Configuration Values
 
-| 環境変数 | 既定値 | 用途 |
+| Environment variable | Default | Purpose |
 | --- | ---: | --- |
-| `PAPER_WATCH_PROFILE_TERM_LIMIT` | `80` | 自動生成語の最大数 |
-| `PAPER_WATCH_PROFILE_COMBO_LIMIT` | `30` | テーマ規則の最大数 |
-| `PAPER_WATCH_PROFILE_COMBO_SCORE_CAP` | `6` | テーマ組み合わせの上限 |
-| `PAPER_WATCH_KEYWORD_DECAY` | `0.85` | 追加概念の逓減率 |
-| `PAPER_WATCH_RAG_CHUNKS_PER_SOURCE` | `6` | PDFごとの参照チャンク数 |
-| `PAPER_WATCH_RAG_TOP_PAPERS` | `3` | 集約する研究室PDF数 |
-| `PAPER_WATCH_RAG_FLOOR` | `0.75` | 固定補正の下限 |
-| `PAPER_WATCH_RAG_CEILING` | `0.90` | 固定補正の上限 |
-| `PAPER_WATCH_RAG_ADAPTIVE_WEIGHT` | `0.35` | 相対補正の混合率 |
-| `PAPER_WATCH_RAG_MIN_TERM_SCORE` | `1` | RAG評価へ進む最低Termスコア |
+| `PAPER_WATCH_PROFILE_TERM_LIMIT` | `80` | Maximum generated profile terms |
+| `PAPER_WATCH_PROFILE_COMBO_LIMIT` | `30` | Maximum theme rules |
+| `PAPER_WATCH_PROFILE_COMBO_SCORE_CAP` | `6` | Theme-combination cap |
+| `PAPER_WATCH_KEYWORD_DECAY` | `0.85` | Diminishing-return factor |
+| `PAPER_WATCH_RAG_CHUNKS_PER_SOURCE` | `6` | Reference chunks per PDF |
+| `PAPER_WATCH_RAG_TOP_PAPERS` | `3` | Distinct lab PDFs to aggregate |
+| `PAPER_WATCH_RAG_FLOOR` | `0.75` | Fixed-calibration lower bound |
+| `PAPER_WATCH_RAG_CEILING` | `0.90` | Fixed-calibration upper bound |
+| `PAPER_WATCH_RAG_ADAPTIVE_WEIGHT` | `0.35` | Adaptive-calibration blend |
+| `PAPER_WATCH_RAG_MIN_TERM_SCORE` | `1` | Minimum Term score for RAG evaluation |
 
-実際の設定候補は[`.env.example`](../.env.example)、実装は[`rag_poc/paper_watch.py`](../rag_poc/paper_watch.py)を参照してください。
+See [`.env.example`](../.env.example) for configuration and [`rag_poc/paper_watch.py`](../rag_poc/paper_watch.py) for the implementation.
