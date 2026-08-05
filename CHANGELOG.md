@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.0 - Unreleased
+## v1.0.0 - 2026-08-05
 
 First stable release of the KohdaLab DS920+ and RTX PaperBot platform.
 
