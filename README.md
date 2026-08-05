@@ -118,11 +118,11 @@ These are the intended Synology DSM Task Scheduler entries. The tasks run as
 | --- | --- | --- | --- |
 | `Paperbot` | Every day 01:00 | Zotero metadata/PDF sync, incremental RAG ingest, profile rebuild, Slack status notification | `cd /volume1/docker/paperbot && ./scripts/sync_zotero_pipeline.sh` |
 | `Paperbot-collect` | Every day 02:00 | Collect broad paper metadata, then enrich recent candidates with RAG similarity without Slack posts | `cd /volume1/docker/paperbot && ./scripts/collect_paper_watch.sh --lookback-days 7` |
-| `Paperbot-arXiv-report` | Every Monday 09:30 | Weekly arXiv report from stored metadata | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope arxiv --lookback-days 7 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Weekly arXiv"` |
-| `Paperbot-APS-JP-report` | First Monday 09:30 | Monthly APS and Japan/applied physics report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aps_core,aps_ext_reviews,japan_physics --lookback-days 35 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Monthly APS/JP"` |
-| `Paperbot-Nature-report` | Second Monday 09:30 | Monthly Nature-family and broad high-impact report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nature_family,broad_high_impact --lookback-days 35 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Monthly Nature/High Impact"` |
-| `Paperbot-AIP-Optics-report` | Third Monday 09:30 | Monthly AIP, IOP, and optics report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aip_family,iop_optics --lookback-days 35 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Monthly AIP/Optics"` |
-| `Paperbot-Nano2D-report` | Fourth Monday 09:30 | Monthly nano, 2D materials, and applied materials report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nano_2d_materials --lookback-days 35 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Monthly Nano/2D"` |
+| `Paperbot-arXiv-report` | Every Monday 09:30 | Weekly arXiv report from stored metadata | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope arxiv --lookback-days 7 --post-limit 5 --min-score 45 --report-title "Paper Watch Weekly arXiv"` |
+| `Paperbot-APS-JP-report` | First Monday 09:30 | Monthly APS and Japan/applied physics report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aps_core,aps_ext_reviews,japan_physics --lookback-days 35 --post-limit 5 --min-score 45 --report-title "Paper Watch Monthly APS/JP"` |
+| `Paperbot-Nature-report` | Second Monday 09:30 | Monthly Nature-family and broad high-impact report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nature_family,broad_high_impact --lookback-days 35 --post-limit 5 --min-score 45 --report-title "Paper Watch Monthly Nature/High Impact"` |
+| `Paperbot-AIP-Optics-report` | Third Monday 09:30 | Monthly AIP, IOP, and optics report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aip_family,iop_optics --lookback-days 35 --post-limit 5 --min-score 45 --report-title "Paper Watch Monthly AIP/Optics"` |
+| `Paperbot-Nano2D-report` | Fourth Monday 09:30 | Monthly nano, 2D materials, and applied materials report | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nano_2d_materials --lookback-days 35 --post-limit 5 --min-score 45 --report-title "Paper Watch Monthly Nano/2D"` |
 
 Paper Watch does not send immediate alerts in the production schedule. Daily
 collection stores metadata, structured lab tags, report categories, and scores
@@ -133,6 +133,13 @@ that stored database by weekly and monthly report tasks.
 enrichment for recently collected unscored candidates. Set
 `PAPER_WATCH_RAG_AFTER_COLLECT=false` only when the NAS should collect metadata
 without touching the RTX embedding endpoint.
+
+Recommendation scores use a 0--100 scale. Keyword synonyms contribute only the
+strongest match in each concept group, title matches receive 1.5x weight, and
+additional keyword concepts receive diminishing weight. RAG aggregates the best
+match from each of the top three distinct lab PDFs and uses 10th/95th percentile
+calibration when a candidate batch is large enough. Profile-derived authors and
+journals contribute small, capped bonuses.
 
 Recommended cadence: collect metadata every day, report arXiv every week, and
 report journal groups monthly. Monthly reports are spread across four Mondays
@@ -337,9 +344,9 @@ flowchart TD
   dedup --> pdf["Download only missing/changed unique PDFs"]
   pdf --> ingest["Incremental PDF text extraction + chunking"]
   ingest --> embed["Embed only new/changed chunks"]
-  embed --> profile["Rebuild lab interest profile"]
-  profile --> restart["Restart Slack bot container"]
-  restart --> notify["Post success/failure to #paperbot-log"]
+  embed --> profile["Automatically rebuild lab interest profile"]
+  profile --> reload["Bot reloads changed SQLite index on next question"]
+  reload --> notify["Post success/failure to #paperbot-log"]
 ```
 
 Incremental behavior:

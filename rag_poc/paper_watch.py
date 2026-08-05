@@ -397,6 +397,31 @@ DEFAULT_TERMS = {
     "valley spin": 4,
 }
 
+# Only the strongest synonym in a concept group contributes to keyword score.
+# Terms learned from the lab profile that are not listed here remain independent.
+TERM_GROUPS = {
+    "psh": {"persistent spin helix", "spin helix", "psh"},
+    "spin_orbit": {
+        "spin-orbit",
+        "spin orbit",
+        "spin-orbit coupling",
+        "spin orbit coupling",
+        "soc",
+        "soi",
+    },
+    "kerr": {"time-resolved kerr", "time resolved kerr", "trkr", "kerr rotation"},
+    "two_deg": {"two-dimensional electron gas", "two dimensional electron gas", "2deg"},
+    "two_d_magnet": {"2d magnet", "two-dimensional magnet", "van der waals magnet"},
+    "spin_exciton": {"spin exciton", "exciton spin"},
+}
+
+DEFAULT_PRIORITY_AUTHORS = {
+    "yuzo ohno": 5.0,
+    "hideo ohno": 3.0,
+}
+
+RAG_PAPER_WEIGHTS = (0.6, 0.3, 0.1)
+
 REPORT_GROUPS = {
     "arxiv_weekly": "arXiv weekly",
     "aps_core": "APS core journals",
@@ -1373,26 +1398,147 @@ def rss_crossref_fallback_entries(
     return fallback_entries
 
 
-def score_entry(entry: dict, terms: dict[str, float]) -> tuple[float, list[str]]:
-    text = f"{entry['title']} {entry['summary']}".lower()
-    score = 0.0
-    reasons = []
-    for term, weight in terms.items():
-        if text_has_term(text, term):
-            score += weight
-            reasons.append(term)
+def parse_weighted_names(raw: str, defaults: dict[str, float]) -> dict[str, float]:
+    if not raw.strip():
+        return dict(defaults)
+    values: dict[str, float] = {}
+    for part in raw.split(","):
+        item = compact_whitespace(part).lower()
+        if not item:
+            continue
+        name, separator, raw_weight = item.rpartition(":")
+        if not separator:
+            values[item] = 1.0
+            continue
+        try:
+            values[name.strip()] = float(raw_weight)
+        except ValueError:
+            values[name.strip()] = 1.0
+    return values
 
+
+def term_group_name(term: str) -> str:
+    normalized = compact_whitespace(term).lower()
+    for group, synonyms in TERM_GROUPS.items():
+        if normalized in synonyms:
+            return group
+    return f"term:{normalized}"
+
+
+def keyword_score(entry: dict, terms: dict[str, float]) -> tuple[float, list[str]]:
+    title = entry.get("title", "").lower()
+    summary = entry.get("summary", "").lower()
+    best_by_group: dict[str, tuple[float, str]] = {}
+    for term, weight in terms.items():
+        if text_has_term(title, term):
+            contribution = float(weight) * 1.5
+        elif text_has_term(summary, term):
+            contribution = float(weight)
+        else:
+            continue
+        group = term_group_name(term)
+        current = best_by_group.get(group)
+        if current is None or contribution > current[0]:
+            best_by_group[group] = (contribution, term)
+
+    matches = sorted(best_by_group.values(), key=lambda item: item[0], reverse=True)
+    decay = min(max(env_float("PAPER_WATCH_KEYWORD_DECAY", 0.85), 0.0), 1.0)
+    score = sum(item[0] * (decay ** index) for index, item in enumerate(matches))
+    return score, [item[1] for item in matches]
+
+
+def profile_metadata_priorities(category: str, *, maximum: float) -> dict[str, float]:
+    entries = load_lab_profile().get("categories", {}).get(category, [])
+    if not isinstance(entries, list) or not entries:
+        return {}
+    try:
+        max_documents = max(float(entry.get("document_count", 0)) for entry in entries)
+    except (TypeError, ValueError):
+        return {}
+    if max_documents <= 0:
+        return {}
+
+    priorities = {}
+    for rank, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        label = compact_whitespace(str(entry.get("label", ""))).lower()
+        if not label:
+            continue
+        try:
+            support = max(0.0, float(entry.get("document_count", 0)) / max_documents)
+        except (TypeError, ValueError):
+            continue
+        rank_decay = 1.0 / math.sqrt(rank + 1.0)
+        priorities[label] = maximum * math.sqrt(support) * rank_decay
+    return priorities
+
+
+def author_bonus(entry: dict) -> float:
+    priorities = profile_metadata_priorities("authors", maximum=5.0)
+    configured = parse_weighted_names(
+        os.environ.get("PAPER_WATCH_PRIORITY_AUTHORS", ""),
+        DEFAULT_PRIORITY_AUTHORS,
+    )
+    for name, weight in configured.items():
+        priorities[name] = max(priorities.get(name, 0.0), weight)
+    authors = " ".join(entry.get("authors", [])).lower()
+    return max(
+        (weight for name, weight in priorities.items() if name and name in authors),
+        default=0.0,
+    )
+
+
+def journal_priority(entry: dict) -> float:
+    priorities = profile_metadata_priorities("journals", maximum=1.0)
+    configured = parse_weighted_names(
+        os.environ.get("PAPER_WATCH_PRIORITY_JOURNALS", ""),
+        {},
+    )
+    for name, weight in configured.items():
+        priorities[name] = max(priorities.get(name, 0.0), weight)
+    journal = compact_whitespace(entry.get("journal", "")).lower()
+    return max(
+        (weight for name, weight in priorities.items() if name and name in journal),
+        default=0.0,
+    )
+
+
+def score_components(entry: dict, terms: dict[str, float]) -> tuple[dict[str, float], list[str]]:
+    text = f"{entry.get('title', '')} {entry.get('summary', '')}".lower()
+    raw_keyword_score, reasons = keyword_score(entry, terms)
     combo_score, combo_reasons = score_profile_combos(text)
-    score += combo_score
     reasons.extend(combo_reasons)
 
+    penalty = 0.0
     for item in profile_negative_terms():
         if text_has_term(text, item["term"]):
-            score -= item["weight"]
+            penalty += float(item["weight"])
             reasons.append(f"penalty:{item['term']}")
 
-    score = max(0.0, score)
-    return score, reasons[:8]
+    raw_keyword_score = max(0.0, raw_keyword_score - penalty)
+    components = {
+        "keyword": raw_keyword_score,
+        "combo": combo_score,
+        "author": author_bonus(entry),
+        "journal": journal_priority(entry),
+    }
+    return components, reasons[:8]
+
+
+def normalized_final_score(components: dict[str, float], rag_score: float) -> float:
+    keyword = min(max(components.get("keyword", 0.0) / 30.0, 0.0), 1.0)
+    rag = min(max(rag_score, 0.0), 1.0)
+    combo = min(max(components.get("combo", 0.0) / 6.0, 0.0), 1.0)
+    author = min(max(components.get("author", 0.0) / 5.0, 0.0), 1.0)
+    journal = min(max(components.get("journal", 0.0), 0.0), 1.0)
+    return 45.0 * keyword + 35.0 * rag + 10.0 * combo + 5.0 * author + 5.0 * journal
+
+
+def score_entry(entry: dict, terms: dict[str, float]) -> tuple[float, list[str]]:
+    components, reasons = score_components(entry, terms)
+    # Keep term_score as a raw eligibility signal for existing configuration.
+    return components["keyword"] + components["combo"], reasons
 
 
 def ensure_entry_identity(entry: dict) -> None:
@@ -1561,11 +1707,8 @@ def load_rag_reference_chunks(
     except sqlite3.OperationalError:
         return []
 
-    chunks = []
-    counts_by_source: dict[str, int] = {}
+    chunks_by_source: dict[str, list[dict]] = {}
     for source, page_start, page_end, text, embedding_json in rows:
-        if counts_by_source.get(source, 0) >= chunks_per_source:
-            continue
         try:
             vector = json.loads(embedding_json)
         except json.JSONDecodeError:
@@ -1573,9 +1716,8 @@ def load_rag_reference_chunks(
         if not isinstance(vector, list) or not vector:
             continue
 
-        counts_by_source[source] = counts_by_source.get(source, 0) + 1
         metadata = metadata_by_source.get(source, {})
-        chunks.append(
+        chunks_by_source.setdefault(source, []).append(
             {
                 "source": source,
                 "source_label": format_rag_source_label(source, metadata),
@@ -1585,30 +1727,136 @@ def load_rag_reference_chunks(
                 "embedding": vector,
             }
         )
+    chunks = []
+    for source_chunks in chunks_by_source.values():
+        chunks.extend(select_diverse_chunks(source_chunks, chunks_per_source))
         if len(chunks) >= max_chunks:
-            break
+            return chunks[:max_chunks]
     return chunks
 
 
-def candidate_embedding_text(entry: dict) -> str:
-    return "\n\n".join(
-        [
-            entry.get("title", ""),
-            compact_authors(entry.get("authors", [])),
-            entry.get("summary", ""),
-        ]
-    ).strip()
+def select_diverse_chunks(chunks: list[dict], limit: int) -> list[dict]:
+    """Select query-independent semantic coverage from one PDF's ordered chunks."""
+    if limit <= 0:
+        return []
+    if len(chunks) <= limit:
+        return list(chunks)
+
+    selected = [chunks[0]]
+    remaining = list(chunks[1:])
+    while remaining and len(selected) < limit:
+        next_chunk = min(
+            remaining,
+            key=lambda candidate: max(
+                cosine(candidate["embedding"], chosen["embedding"])
+                for chosen in selected
+            ),
+        )
+        selected.append(next_chunk)
+        remaining.remove(next_chunk)
+    return selected
 
 
-def best_rag_match(query_vector: list[float], chunks: list[dict]) -> tuple[float, dict | None]:
-    best_score = -1.0
-    best_chunk = None
+def best_rag_matches(
+    query_vector: list[float],
+    chunks: list[dict],
+    *,
+    top_papers: int = 3,
+    weights: tuple[float, ...] = RAG_PAPER_WEIGHTS,
+) -> tuple[float, list[dict]]:
+    best_by_source: dict[str, tuple[float, dict]] = {}
     for chunk in chunks:
         score = cosine(query_vector, chunk["embedding"])
-        if score > best_score:
-            best_score = score
-            best_chunk = chunk
-    return max(0.0, best_score), best_chunk
+        current = best_by_source.get(chunk["source"])
+        if current is None or score > current[0]:
+            best_by_source[chunk["source"]] = (score, chunk)
+
+    matches = sorted(best_by_source.values(), key=lambda item: item[0], reverse=True)
+    matches = matches[:max(0, min(top_papers, len(weights)))]
+    rag_score = sum(
+        weight * max(0.0, match[0])
+        for weight, match in zip(weights, matches)
+    )
+    return rag_score, [dict(match[1], similarity=max(0.0, match[0])) for match in matches]
+
+
+def combine_title_abstract_matches(
+    title_vector: list[float],
+    abstract_vector: list[float],
+    chunks: list[dict],
+    *,
+    top_papers: int = 3,
+    weights: tuple[float, ...] = RAG_PAPER_WEIGHTS,
+) -> tuple[float, list[dict]]:
+    best_by_source: dict[str, dict] = {}
+    for chunk in chunks:
+        source = chunk["source"]
+        title_score = cosine(title_vector, chunk["embedding"])
+        abstract_score = cosine(abstract_vector, chunk["embedding"])
+        current = best_by_source.get(source)
+        if current is None:
+            current = {
+                "chunk": chunk,
+                "title_score": title_score,
+                "abstract_score": abstract_score,
+            }
+            best_by_source[source] = current
+        else:
+            if title_score > current["title_score"]:
+                current["title_score"] = title_score
+            if abstract_score > current["abstract_score"]:
+                current["abstract_score"] = abstract_score
+                current["chunk"] = chunk
+
+    matches = []
+    for match in best_by_source.values():
+        similarity = 0.35 * max(0.0, match["title_score"]) + 0.65 * max(
+            0.0, match["abstract_score"]
+        )
+        matches.append(dict(match["chunk"], similarity=similarity))
+    matches.sort(key=lambda item: item["similarity"], reverse=True)
+    matches = matches[:max(0, min(top_papers, len(weights)))]
+    raw_score = sum(weight * match["similarity"] for weight, match in zip(weights, matches))
+    return raw_score, matches
+
+
+def calibrate_rag_score(score: float, *, floor: float = 0.75, ceiling: float = 0.90) -> float:
+    if ceiling <= floor:
+        return 0.0
+    return max(0.0, min(1.0, (score - floor) / (ceiling - floor)))
+
+
+def percentile(values: list[float], probability: float) -> float:
+    if not values:
+        raise ValueError("percentile requires at least one value")
+    ordered = sorted(values)
+    position = min(max(probability, 0.0), 1.0) * (len(ordered) - 1)
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    fraction = position - lower
+    return ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
+
+
+def adaptive_rag_bounds(
+    scores: list[float],
+    *,
+    fallback_floor: float,
+    fallback_ceiling: float,
+    min_candidates: int = 10,
+    min_span: float = 0.03,
+) -> tuple[float, float]:
+    usable = [score for score in scores if math.isfinite(score)]
+    if len(usable) < min_candidates:
+        return fallback_floor, fallback_ceiling
+    floor = percentile(usable, 0.10)
+    ceiling = percentile(usable, 0.95)
+    if ceiling - floor < min_span:
+        midpoint = (floor + ceiling) / 2.0
+        floor = midpoint - min_span / 2.0
+        ceiling = midpoint + min_span / 2.0
+    return floor, ceiling
 
 
 def apply_rag_scores(
@@ -1630,8 +1878,8 @@ def apply_rag_scores(
 
     reference_chunks = load_rag_reference_chunks(
         conn,
-        max_chunks=env_int("PAPER_WATCH_RAG_MAX_CHUNKS", 1200),
-        chunks_per_source=env_int("PAPER_WATCH_RAG_CHUNKS_PER_SOURCE", 2),
+        max_chunks=env_int("PAPER_WATCH_RAG_MAX_CHUNKS", 8000),
+        chunks_per_source=env_int("PAPER_WATCH_RAG_CHUNKS_PER_SOURCE", 6),
     )
     if not reference_chunks:
         print("Paper Watch RAG score skipped: no indexed PDF chunks found.")
@@ -1639,8 +1887,11 @@ def apply_rag_scores(
 
     candidate_limit = env_int("PAPER_WATCH_RAG_CANDIDATE_LIMIT", 30)
     min_term_score = env_float("PAPER_WATCH_RAG_MIN_TERM_SCORE", 1.0)
-    rag_weight = env_float("PAPER_WATCH_RAG_WEIGHT", 8.0)
+    top_papers = max(1, min(3, env_int("PAPER_WATCH_RAG_TOP_PAPERS", 3)))
+    rag_floor = env_float("PAPER_WATCH_RAG_FLOOR", 0.75)
+    rag_ceiling = env_float("PAPER_WATCH_RAG_CEILING", 0.90)
     model = paper_watch_embed_model()
+    terms = profile_terms()
 
     eligible_entries = [
         entry for entry in entries if entry.get("term_score", 0.0) >= min_term_score
@@ -1650,9 +1901,13 @@ def apply_rag_scores(
         reverse=True,
     )
 
+    raw_results: list[tuple[dict, float, list[dict]]] = []
     for entry in eligible_entries[:candidate_limit]:
         try:
-            query_vector = embed(candidate_embedding_text(entry), model, timeout=180)
+            title_text = compact_whitespace(entry.get("title", ""))
+            abstract_text = compact_whitespace(entry.get("summary", "")) or title_text
+            title_vector = embed(title_text, model, timeout=180)
+            abstract_vector = embed(abstract_text, model, timeout=180)
         except OllamaError as exc:
             print(
                 f"Paper Watch RAG score failed for {entry['external_id']}: {exc}",
@@ -1660,9 +1915,39 @@ def apply_rag_scores(
             )
             continue
 
-        rag_score, nearest = best_rag_match(query_vector, reference_chunks)
+        raw_rag_score, matches = combine_title_abstract_matches(
+            title_vector,
+            abstract_vector,
+            reference_chunks,
+            top_papers=top_papers,
+        )
+        raw_results.append((entry, raw_rag_score, matches))
+
+    if env_bool("PAPER_WATCH_RAG_ADAPTIVE_CALIBRATION", True):
+        rag_floor, rag_ceiling = adaptive_rag_bounds(
+            [result[1] for result in raw_results],
+            fallback_floor=rag_floor,
+            fallback_ceiling=rag_ceiling,
+            min_candidates=max(3, env_int("PAPER_WATCH_RAG_ADAPTIVE_MIN_CANDIDATES", 10)),
+            min_span=max(0.001, env_float("PAPER_WATCH_RAG_ADAPTIVE_MIN_SPAN", 0.03)),
+        )
+    if raw_results:
+        print(
+            "Paper Watch RAG calibration: "
+            f"floor={rag_floor:.3f} ceiling={rag_ceiling:.3f} candidates={len(raw_results)}"
+        )
+
+    for entry, raw_rag_score, matches in raw_results:
+        rag_score = calibrate_rag_score(
+            raw_rag_score,
+            floor=rag_floor,
+            ceiling=rag_ceiling,
+        )
+        entry["rag_raw_score"] = raw_rag_score
         entry["rag_score"] = rag_score
-        entry["score"] = entry["term_score"] + (rag_score * rag_weight)
+        components, _ = score_components(entry, terms)
+        entry["score"] = normalized_final_score(components, rag_score)
+        nearest = matches[0] if matches else None
         if nearest:
             entry["rag_source"] = nearest["source"]
             entry["rag_source_label"] = nearest["source_label"]
@@ -2344,9 +2629,9 @@ def relevance_grade(item: dict) -> str:
     score = float(item.get("score", 0.0))
     rag_score = float(item.get("rag_score", 0.0))
     term_score = float(item.get("term_score", score))
-    if score >= 14 or rag_score >= 0.78 or term_score >= 10:
+    if score >= 70 or rag_score >= 0.78 or term_score >= 10:
         return "S"
-    if score >= 9 or rag_score >= 0.70 or term_score >= 6:
+    if score >= 45 or rag_score >= 0.45 or term_score >= 6:
         return "A"
     return "B"
 
@@ -2587,7 +2872,7 @@ def slack_link(url: str, label: str = "open") -> str:
 
 def score_summary(item: dict, *, use_rag_score: bool) -> str:
     parts = [
-        f"score={item['score']:.1f}",
+        f"score={item['score']:.1f}/100",
         f"term={item.get('term_score', item['score']):.1f}",
     ]
     if use_rag_score:
@@ -2938,7 +3223,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--notify-empty", action="store_true", help="Post even when no papers matched.")
     parser.add_argument("--max-results", type=int, default=env_int("PAPER_WATCH_MAX_RESULTS", 80))
     parser.add_argument("--post-limit", type=int, default=env_int("PAPER_WATCH_POST_LIMIT", 5))
-    parser.add_argument("--min-score", type=float, default=env_float("PAPER_WATCH_MIN_SCORE", 6.0))
+    parser.add_argument("--min-score", type=float, default=env_float("PAPER_WATCH_MIN_SCORE", 45.0))
     parser.add_argument("--lookback-days", type=int, default=env_int("PAPER_WATCH_LOOKBACK_DAYS", 14))
     parser.add_argument("--sources", default="", help="Comma-separated sources, e.g. arxiv,crossref,rss.")
     parser.add_argument(
@@ -3040,9 +3325,10 @@ def fetch_and_score_entries(args: argparse.Namespace, terms: dict[str, float]) -
     for entry in entries:
         if entry["published_at"] < cutoff:
             continue
-        term_score, reasons = score_entry(entry, terms)
+        components, reasons = score_components(entry, terms)
+        term_score = components["keyword"] + components["combo"]
         entry["term_score"] = term_score
-        entry["score"] = term_score
+        entry["score"] = normalized_final_score(components, 0.0)
         entry["rag_score"] = 0.0
         entry["rag_source"] = ""
         entry["rag_source_label"] = ""

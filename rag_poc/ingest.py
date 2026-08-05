@@ -349,6 +349,19 @@ def write_ingest_report(report: dict) -> None:
     )
 
 
+def refresh_lab_profile() -> None:
+    try:
+        from .lab_profile import PROFILE_JSON_PATH, PROFILE_MD_PATH, generate_profile
+    except ImportError:
+        from lab_profile import PROFILE_JSON_PATH, PROFILE_MD_PATH, generate_profile
+
+    profile = generate_profile()
+    print(
+        "Updated lab profile: "
+        f"documents={profile['document_count']} json={PROFILE_JSON_PATH} markdown={PROFILE_MD_PATH}"
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Incrementally index PDFs into the local SQLite RAG database."
@@ -614,6 +627,7 @@ def main() -> None:
         "removed_sources": removed_sources,
     }
     write_ingest_report(report)
+    refresh_lab_profile()
 
     print(
         "Done. "
