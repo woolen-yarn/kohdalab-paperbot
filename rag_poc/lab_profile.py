@@ -391,10 +391,8 @@ def load_documents(
     except sqlite3.OperationalError:
         return list(documents.values())
 
-    counts_by_source: dict[str, int] = {}
+    chunk_texts_by_source: dict[str, list[str]] = {}
     for source, text in chunk_rows:
-        if counts_by_source.get(source, 0) >= max_chunks_per_source:
-            continue
         if source not in documents:
             if len(documents) >= max_docs:
                 continue
@@ -408,8 +406,20 @@ def load_documents(
                 "date_modified": "",
                 "text": "",
             }
-        documents[source]["text"] += "\n" + (text or "")
-        counts_by_source[source] = counts_by_source.get(source, 0) + 1
+        chunk_texts_by_source.setdefault(source, []).append(text or "")
+
+    for source, texts in chunk_texts_by_source.items():
+        if len(texts) <= max_chunks_per_source:
+            selected = texts
+        elif max_chunks_per_source == 1:
+            selected = [texts[0]]
+        else:
+            indices = {
+                round(index * (len(texts) - 1) / (max_chunks_per_source - 1))
+                for index in range(max_chunks_per_source)
+            }
+            selected = [texts[index] for index in sorted(indices)]
+        documents[source]["text"] += "\n" + "\n".join(selected)
 
     return list(documents.values())
 
@@ -873,7 +883,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--markdown", type=Path, default=PROFILE_MD_PATH)
     parser.add_argument("--top", type=int, default=8)
     parser.add_argument("--max-docs", type=int, default=5000)
-    parser.add_argument("--max-chunks-per-source", type=int, default=2)
+    parser.add_argument("--max-chunks-per-source", type=int, default=6)
     parser.add_argument("--recent-days", type=int, default=365)
     parser.add_argument("--term-top", type=int, default=80)
     parser.add_argument("--combination-top", type=int, default=20)
@@ -881,31 +891,60 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
-    if not args.db.exists():
-        raise SystemExit(f"SQLite index not found: {args.db}")
+def generate_profile(
+    *,
+    db: Path = INDEX_DB_PATH,
+    json_path: Path = PROFILE_JSON_PATH,
+    markdown_path: Path = PROFILE_MD_PATH,
+    top: int = 8,
+    max_docs: int = 5000,
+    max_chunks_per_source: int = 6,
+    recent_days: int = 365,
+    term_top: int = 80,
+    combination_top: int = 20,
+) -> dict:
+    if not db.exists():
+        raise FileNotFoundError(f"SQLite index not found: {db}")
 
-    conn = sqlite3.connect(args.db)
+    conn = sqlite3.connect(db)
     try:
         documents = load_documents(
             conn,
-            max_docs=args.max_docs,
-            max_chunks_per_source=args.max_chunks_per_source,
+            max_docs=max_docs,
+            max_chunks_per_source=max_chunks_per_source,
         )
     finally:
         conn.close()
 
     profile = build_profile(
         documents,
-        top=args.top,
-        recent_days=args.recent_days,
-        term_top=args.term_top,
-        combination_top=args.combination_top,
+        top=top,
+        recent_days=recent_days,
+        term_top=term_top,
+        combination_top=combination_top,
     )
-    args.json.parent.mkdir(parents=True, exist_ok=True)
-    args.json.write_text(json.dumps(profile, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    args.markdown.write_text(profile_to_markdown(profile), encoding="utf-8")
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(profile, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    markdown_path.write_text(profile_to_markdown(profile), encoding="utf-8")
+    return profile
+
+
+def main() -> None:
+    args = parse_args()
+    try:
+        profile = generate_profile(
+            db=args.db,
+            json_path=args.json,
+            markdown_path=args.markdown,
+            top=args.top,
+            max_docs=args.max_docs,
+            max_chunks_per_source=args.max_chunks_per_source,
+            recent_days=args.recent_days,
+            term_top=args.term_top,
+            combination_top=args.combination_top,
+        )
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from exc
 
     print(f"Wrote {args.json}")
     print(f"Wrote {args.markdown}")

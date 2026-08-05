@@ -96,7 +96,7 @@ The default Slack output is compact:
 
 ## Lab Profile
 
-The generated profile is rebuilt by the daily Zotero/RAG pipeline and overwrites
+Every successful ingest rebuilds the generated profile and overwrites
 `lab_profile.json` and `lab_profile.md`. It is both a readable summary and a
 scoring prior for Paper Watch.
 
@@ -108,6 +108,15 @@ scoring prior for Paper Watch.
 - `negative_profile`: peripheral topics that should reduce recommendation score
 - `categories`: material systems, methods, physics concepts, applications,
   journals, and normalized authors
+
+Paper Watch uses a 0--100 recommendation score: 45% grouped keyword relevance,
+35% calibrated multi-PDF RAG relevance, 10% profile theme combinations, 5%
+profile/configured priority authors, and 5% profile/configured journal priority.
+It embeds candidate titles and abstracts separately and aggregates the top three
+distinct indexed PDFs.
+Keyword concepts use diminishing returns, and sufficiently large batches use
+10th/95th percentile RAG calibration. Every successful ingest regenerates the
+JSON and Markdown lab profiles from evenly distributed chunks across each PDF.
 
 Paper Watch reads this profile automatically when it exists. Manual
 `PAPER_WATCH_TERMS` still works as an override, but normal production should use

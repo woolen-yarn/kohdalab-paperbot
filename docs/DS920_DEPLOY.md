@@ -123,9 +123,9 @@ The pipeline:
 1. checks Ollama embedding connectivity
 2. fetches Zotero metadata
 3. downloads only missing or changed unique PDFs
-4. incrementally indexes changed PDFs into SQLite
-5. rebuilds the lab interest profile
-6. restarts the Slack bot
+4. incrementally indexes changed PDFs into SQLite and rebuilds the lab interest profile
+5. uses the refreshed terms, authors, journals, and theme combinations for Paper Watch
+6. leaves the always-on Slack bot running; it reloads the SQLite index when the file changes
 7. posts success or failure to `#paperbot-log`
 
 ## 5. DSM Task Scheduler
@@ -136,11 +136,11 @@ Create the tasks in DSM Control Panel > Task Scheduler. Use `root` as the owner.
 | --- | --- | --- |
 | `Paperbot` | Daily 01:00 | `cd /volume1/docker/paperbot && ./scripts/sync_zotero_pipeline.sh` |
 | `Paperbot-collect` | Daily 02:00 | `cd /volume1/docker/paperbot && ./scripts/collect_paper_watch.sh --lookback-days 7` |
-| `Paperbot-arXiv-report` | Every Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope arxiv --lookback-days 7 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Weekly arXiv"` |
-| `Paperbot-APS-JP-report` | First Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aps_core,aps_ext_reviews,japan_physics --lookback-days 35 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Monthly APS/JP"` |
-| `Paperbot-Nature-report` | Second Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nature_family,broad_high_impact --lookback-days 35 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Monthly Nature/High Impact"` |
-| `Paperbot-AIP-Optics-report` | Third Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aip_family,iop_optics --lookback-days 35 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Monthly AIP/Optics"` |
-| `Paperbot-Nano2D-report` | Fourth Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nano_2d_materials --lookback-days 35 --post-limit 5 --min-score 4.5 --report-title "Paper Watch Monthly Nano/2D"` |
+| `Paperbot-arXiv-report` | Every Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope arxiv --lookback-days 7 --post-limit 5 --min-score 45 --report-title "Paper Watch Weekly arXiv"` |
+| `Paperbot-APS-JP-report` | First Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aps_core,aps_ext_reviews,japan_physics --lookback-days 35 --post-limit 5 --min-score 45 --report-title "Paper Watch Monthly APS/JP"` |
+| `Paperbot-Nature-report` | Second Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nature_family,broad_high_impact --lookback-days 35 --post-limit 5 --min-score 45 --report-title "Paper Watch Monthly Nature/High Impact"` |
+| `Paperbot-AIP-Optics-report` | Third Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups aip_family,iop_optics --lookback-days 35 --post-limit 5 --min-score 45 --report-title "Paper Watch Monthly AIP/Optics"` |
+| `Paperbot-Nano2D-report` | Fourth Monday 09:30 | `cd /volume1/docker/paperbot && ./scripts/report_paper_watch.sh --report-scope journals --report-groups nano_2d_materials --lookback-days 35 --post-limit 5 --min-score 45 --report-title "Paper Watch Monthly Nano/2D"` |
 
 Immediate Paper Watch alerts are off in production. The daily collection task
 stores metadata, classifications, scores, and expiry timestamps in
@@ -152,6 +152,15 @@ selected paper.
 enrichment for recently collected unscored candidates. Set
 `PAPER_WATCH_RAG_AFTER_COLLECT=false` only when the NAS should collect metadata
 without touching the RTX embedding endpoint.
+
+Paper Watch scores are normalized to 0--100. RAG compares title and abstract
+separately against representative chunks, keeps the best chunk per indexed PDF,
+aggregates the top three PDFs with weights 0.6/0.3/0.1, and calibrates raw
+similarity from the configured floor/ceiling to 0--1. The default report cutoff
+is 45. With at least ten candidates, the calibration automatically uses the
+batch's 10th and 95th percentiles. Additional keyword concepts receive
+diminishing weight, and the refreshed profile supplies capped author and journal
+priorities. This requires no Paper Watch database schema change.
 
 Recommended cadence: collect metadata every day, report arXiv every week, and
 report journal groups monthly. Monthly reports are spread across four Mondays
@@ -300,6 +309,14 @@ Pull the embedding model on the RTX PC:
 ```bash
 ollama pull nomic-embed-text
 ```
+
+`kohdalab-paperbot was unexpectedly stopped` after a scheduled sync
+
+Current versions do not restart the always-on container after indexing. The bot
+detects the SQLite modification time and reloads the RAG index on the next
+question. If this notification continues, confirm the NAS checkout no longer
+contains `docker compose ... restart paperbot` in
+`scripts/sync_zotero_pipeline.sh`.
 
 `RSS feed skipped: HTTP 403`
 

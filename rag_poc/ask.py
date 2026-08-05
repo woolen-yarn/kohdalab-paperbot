@@ -263,12 +263,17 @@ Japanese answer:
     return clean_answer(strip_translation_output(generate(prompt, TRANSLATION_MODEL, timeout=180)))
 
 
-@lru_cache(maxsize=1)
 def load_chunks() -> tuple[dict, ...]:
     if not INDEX_DB_PATH.exists():
         raise FileNotFoundError(
             f"SQLite index not found. Run: python {ROOT / 'ingest.py'}"
         )
+    return load_chunks_for_mtime(INDEX_DB_PATH.stat().st_mtime_ns)
+
+
+@lru_cache(maxsize=2)
+def load_chunks_for_mtime(_mtime_ns: int) -> tuple[dict, ...]:
+    """Load chunks again whenever the on-disk SQLite index changes."""
 
     chunks = []
     conn = sqlite3.connect(INDEX_DB_PATH)

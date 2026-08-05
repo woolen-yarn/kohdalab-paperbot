@@ -70,14 +70,6 @@ run_or_notify compose_run zotero python rag_poc/zotero_sync.py $ZOTERO_ARGS
 step "Ingest Zotero PDFs"
 run_or_notify compose_run ingest python rag_poc/ingest.py $INGEST_ARGS
 
-step "Build lab interest profile"
-run_or_notify compose_run_t ingest python -m rag_poc.lab_profile
-
-if [ "${SKIP_RESTART:-0}" != "1" ]; then
-  step "Restart PaperBot"
-  run_or_notify compose restart paperbot
-fi
-
 step "Pipeline report"
 if compose_run_t zotero python - <<'PY'
 import sqlite3
