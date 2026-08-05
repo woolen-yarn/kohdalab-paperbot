@@ -82,31 +82,43 @@ def generate(prompt: str, model: str, timeout: int = 240) -> str:
     return message.get("content", "").strip()
 
 
-def embed(text: str, model: str, timeout: int = 180) -> list[float]:
+def embed_many(texts: list[str], model: str, timeout: int = 180) -> list[list[float]]:
+    if not texts:
+        return []
     response = _post_json(
         "/api/embed",
         {
             "model": model,
-            "input": text,
+            "input": texts,
         },
         timeout=timeout,
     )
 
     embeddings = response.get("embeddings")
-    if embeddings and isinstance(embeddings, list):
-        return embeddings[0]
+    if isinstance(embeddings, list) and len(embeddings) == len(texts):
+        return embeddings
 
-    # Older Ollama-compatible endpoint shape.
-    response = _post_json(
-        "/api/embeddings",
-        {
-            "model": model,
-            "prompt": text,
-        },
-        timeout=timeout,
-    )
-    embedding = response.get("embedding")
-    if embedding:
-        return embedding
+    # Older Ollama-compatible endpoint shape does not support batches.
+    legacy_embeddings = []
+    for text in texts:
+        response = _post_json(
+            "/api/embeddings",
+            {
+                "model": model,
+                "prompt": text,
+            },
+            timeout=timeout,
+        )
+        embedding = response.get("embedding")
+        if not embedding:
+            raise OllamaError("Ollama did not return an embedding.")
+        legacy_embeddings.append(embedding)
+    return legacy_embeddings
+
+
+def embed(text: str, model: str, timeout: int = 180) -> list[float]:
+    embeddings = embed_many([text], model, timeout=timeout)
+    if embeddings:
+        return embeddings[0]
 
     raise OllamaError("Ollama did not return an embedding.")

@@ -113,10 +113,13 @@ Paper Watch uses a 0--100 recommendation score: 45% grouped keyword relevance,
 35% calibrated multi-PDF RAG relevance, 10% profile theme combinations, 5%
 profile/configured priority authors, and 5% profile/configured journal priority.
 It embeds candidate titles and abstracts separately and aggregates the top three
-distinct indexed PDFs.
-Keyword concepts use diminishing returns, and sufficiently large batches use
-10th/95th percentile RAG calibration. Every successful ingest regenerates the
-JSON and Markdown lab profiles from evenly distributed chunks across each PDF.
+distinct indexed PDFs. The two texts are sent together through Ollama's batch
+embedding API to avoid an extra network round trip per candidate.
+Keyword concepts use diminishing returns. Sufficiently large batches blend 35%
+of their 10th/95th-percentile relative calibration with 65% of the fixed
+absolute calibration, preserving comparability between report runs. Every
+successful ingest regenerates the JSON and Markdown lab profiles from evenly
+distributed chunks across each PDF.
 
 Paper Watch reads this profile automatically when it exists. Manual
 `PAPER_WATCH_TERMS` still works as an override, but normal production should use

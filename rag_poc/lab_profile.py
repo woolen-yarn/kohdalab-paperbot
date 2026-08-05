@@ -381,6 +381,9 @@ def load_documents(
         return list(documents.values())
 
     try:
+        chunk_counts = dict(
+            conn.execute("SELECT source, COUNT(*) FROM chunks GROUP BY source").fetchall()
+        )
         chunk_rows = conn.execute(
             """
             SELECT source, text
@@ -391,8 +394,26 @@ def load_documents(
     except sqlite3.OperationalError:
         return list(documents.values())
 
-    chunk_texts_by_source: dict[str, list[str]] = {}
+    selected_indices_by_source: dict[str, set[int]] = {}
+    for source, count in chunk_counts.items():
+        if count <= max_chunks_per_source:
+            indices = set(range(count))
+        elif max_chunks_per_source == 1:
+            indices = {0}
+        else:
+            indices = {
+                round(index * (count - 1) / (max_chunks_per_source - 1))
+                for index in range(max_chunks_per_source)
+            }
+        selected_indices_by_source[source] = indices
+
+    positions_by_source: dict[str, int] = {}
     for source, text in chunk_rows:
+        position = positions_by_source.get(source, 0)
+        positions_by_source[source] = position + 1
+        selected_indices = selected_indices_by_source.get(source)
+        if selected_indices is None or position not in selected_indices:
+            continue
         if source not in documents:
             if len(documents) >= max_docs:
                 continue
@@ -406,20 +427,7 @@ def load_documents(
                 "date_modified": "",
                 "text": "",
             }
-        chunk_texts_by_source.setdefault(source, []).append(text or "")
-
-    for source, texts in chunk_texts_by_source.items():
-        if len(texts) <= max_chunks_per_source:
-            selected = texts
-        elif max_chunks_per_source == 1:
-            selected = [texts[0]]
-        else:
-            indices = {
-                round(index * (len(texts) - 1) / (max_chunks_per_source - 1))
-                for index in range(max_chunks_per_source)
-            }
-            selected = [texts[index] for index in sorted(indices)]
-        documents[source]["text"] += "\n" + "\n".join(selected)
+        documents[source]["text"] += "\n" + (text or "")
 
     return list(documents.values())
 

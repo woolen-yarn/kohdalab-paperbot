@@ -137,9 +137,9 @@ without touching the RTX embedding endpoint.
 Recommendation scores use a 0--100 scale. Keyword synonyms contribute only the
 strongest match in each concept group, title matches receive 1.5x weight, and
 additional keyword concepts receive diminishing weight. RAG aggregates the best
-match from each of the top three distinct lab PDFs and uses 10th/95th percentile
-calibration when a candidate batch is large enough. Profile-derived authors and
-journals contribute small, capped bonuses.
+match from each of the top three distinct lab PDFs. Large candidate batches blend
+65% fixed calibration with 35% 10th/95th-percentile relative calibration.
+Profile-derived authors and journals contribute small, capped bonuses.
 
 Recommended cadence: collect metadata every day, report arXiv every week, and
 report journal groups monthly. Monthly reports are spread across four Mondays
@@ -447,6 +447,8 @@ credentials.
 ## Release
 
 Current release: `v0.2.0`
+
+Next planned release: `v1.0.0`
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes.
 

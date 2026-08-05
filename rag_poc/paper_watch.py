@@ -20,9 +20,9 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 try:
-    from .ollama_client import OllamaError, embed, generate
+    from .ollama_client import OllamaError, embed_many, generate
 except ImportError:
-    from ollama_client import OllamaError, embed, generate
+    from ollama_client import OllamaError, embed_many, generate
 
 
 ROOT = Path(__file__).resolve().parent
@@ -1614,6 +1614,25 @@ def cosine(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
+def unit_vector(vector: list[float]) -> tuple[float, ...]:
+    norm = math.sqrt(sum(value * value for value in vector))
+    if norm == 0:
+        return tuple(0.0 for _ in vector)
+    return tuple(value / norm for value in vector)
+
+
+def unit_dot(a: tuple[float, ...], b: tuple[float, ...]) -> float:
+    return sum(x * y for x, y in zip(a, b))
+
+
+def chunk_unit_embedding(chunk: dict) -> tuple[float, ...]:
+    cached = chunk.get("_unit_embedding")
+    if cached is None:
+        cached = unit_vector(chunk["embedding"])
+        chunk["_unit_embedding"] = cached
+    return cached
+
+
 def parse_authors(authors_json: str) -> list[str]:
     try:
         authors = json.loads(authors_json or "[]")
@@ -1695,7 +1714,7 @@ def load_rag_reference_chunks(
     if max_chunks <= 0 or chunks_per_source <= 0:
         return []
 
-    metadata_by_source = load_lab_metadata_by_source()
+    metadata_by_source = load_metadata_by_source(conn)
     try:
         rows = conn.execute(
             """
@@ -1725,6 +1744,7 @@ def load_rag_reference_chunks(
                 "page_end": page_end,
                 "text": text,
                 "embedding": vector,
+                "_unit_embedding": unit_vector(vector),
             }
         )
     chunks = []
@@ -1748,7 +1768,7 @@ def select_diverse_chunks(chunks: list[dict], limit: int) -> list[dict]:
         next_chunk = min(
             remaining,
             key=lambda candidate: max(
-                cosine(candidate["embedding"], chosen["embedding"])
+                unit_dot(chunk_unit_embedding(candidate), chunk_unit_embedding(chosen))
                 for chosen in selected
             ),
         )
@@ -1764,9 +1784,10 @@ def best_rag_matches(
     top_papers: int = 3,
     weights: tuple[float, ...] = RAG_PAPER_WEIGHTS,
 ) -> tuple[float, list[dict]]:
+    query_unit = unit_vector(query_vector)
     best_by_source: dict[str, tuple[float, dict]] = {}
     for chunk in chunks:
-        score = cosine(query_vector, chunk["embedding"])
+        score = unit_dot(query_unit, chunk_unit_embedding(chunk))
         current = best_by_source.get(chunk["source"])
         if current is None or score > current[0]:
             best_by_source[chunk["source"]] = (score, chunk)
@@ -1788,11 +1809,14 @@ def combine_title_abstract_matches(
     top_papers: int = 3,
     weights: tuple[float, ...] = RAG_PAPER_WEIGHTS,
 ) -> tuple[float, list[dict]]:
+    title_unit = unit_vector(title_vector)
+    abstract_unit = unit_vector(abstract_vector)
     best_by_source: dict[str, dict] = {}
     for chunk in chunks:
         source = chunk["source"]
-        title_score = cosine(title_vector, chunk["embedding"])
-        abstract_score = cosine(abstract_vector, chunk["embedding"])
+        chunk_unit = chunk_unit_embedding(chunk)
+        title_score = unit_dot(title_unit, chunk_unit)
+        abstract_score = unit_dot(abstract_unit, chunk_unit)
         current = best_by_source.get(source)
         if current is None:
             current = {
@@ -1859,6 +1883,25 @@ def adaptive_rag_bounds(
     return floor, ceiling
 
 
+def blended_rag_scores(
+    scores: list[float],
+    *,
+    fixed_floor: float,
+    fixed_ceiling: float,
+    adaptive_floor: float,
+    adaptive_ceiling: float,
+    adaptive_weight: float,
+) -> list[float]:
+    weight = min(max(adaptive_weight, 0.0), 1.0)
+    return [
+        (1.0 - weight)
+        * calibrate_rag_score(score, floor=fixed_floor, ceiling=fixed_ceiling)
+        + weight
+        * calibrate_rag_score(score, floor=adaptive_floor, ceiling=adaptive_ceiling)
+        for score in scores
+    ]
+
+
 def apply_rag_scores(
     entries: list[dict],
     conn: sqlite3.Connection,
@@ -1888,8 +1931,8 @@ def apply_rag_scores(
     candidate_limit = env_int("PAPER_WATCH_RAG_CANDIDATE_LIMIT", 30)
     min_term_score = env_float("PAPER_WATCH_RAG_MIN_TERM_SCORE", 1.0)
     top_papers = max(1, min(3, env_int("PAPER_WATCH_RAG_TOP_PAPERS", 3)))
-    rag_floor = env_float("PAPER_WATCH_RAG_FLOOR", 0.75)
-    rag_ceiling = env_float("PAPER_WATCH_RAG_CEILING", 0.90)
+    fixed_rag_floor = env_float("PAPER_WATCH_RAG_FLOOR", 0.75)
+    fixed_rag_ceiling = env_float("PAPER_WATCH_RAG_CEILING", 0.90)
     model = paper_watch_embed_model()
     terms = profile_terms()
 
@@ -1906,8 +1949,11 @@ def apply_rag_scores(
         try:
             title_text = compact_whitespace(entry.get("title", ""))
             abstract_text = compact_whitespace(entry.get("summary", "")) or title_text
-            title_vector = embed(title_text, model, timeout=180)
-            abstract_vector = embed(abstract_text, model, timeout=180)
+            title_vector, abstract_vector = embed_many(
+                [title_text, abstract_text],
+                model,
+                timeout=180,
+            )
         except OllamaError as exc:
             print(
                 f"Paper Watch RAG score failed for {entry['external_id']}: {exc}",
@@ -1923,26 +1969,40 @@ def apply_rag_scores(
         )
         raw_results.append((entry, raw_rag_score, matches))
 
+    raw_scores = [result[1] for result in raw_results]
+    adaptive_rag_floor = fixed_rag_floor
+    adaptive_rag_ceiling = fixed_rag_ceiling
+    adaptive_weight = 0.0
     if env_bool("PAPER_WATCH_RAG_ADAPTIVE_CALIBRATION", True):
-        rag_floor, rag_ceiling = adaptive_rag_bounds(
-            [result[1] for result in raw_results],
-            fallback_floor=rag_floor,
-            fallback_ceiling=rag_ceiling,
+        adaptive_rag_floor, adaptive_rag_ceiling = adaptive_rag_bounds(
+            raw_scores,
+            fallback_floor=fixed_rag_floor,
+            fallback_ceiling=fixed_rag_ceiling,
             min_candidates=max(3, env_int("PAPER_WATCH_RAG_ADAPTIVE_MIN_CANDIDATES", 10)),
             min_span=max(0.001, env_float("PAPER_WATCH_RAG_ADAPTIVE_MIN_SPAN", 0.03)),
         )
+        if (adaptive_rag_floor, adaptive_rag_ceiling) != (
+            fixed_rag_floor,
+            fixed_rag_ceiling,
+        ):
+            adaptive_weight = env_float("PAPER_WATCH_RAG_ADAPTIVE_WEIGHT", 0.35)
+    calibrated_scores = blended_rag_scores(
+        raw_scores,
+        fixed_floor=fixed_rag_floor,
+        fixed_ceiling=fixed_rag_ceiling,
+        adaptive_floor=adaptive_rag_floor,
+        adaptive_ceiling=adaptive_rag_ceiling,
+        adaptive_weight=adaptive_weight,
+    )
     if raw_results:
         print(
             "Paper Watch RAG calibration: "
-            f"floor={rag_floor:.3f} ceiling={rag_ceiling:.3f} candidates={len(raw_results)}"
+            f"fixed={fixed_rag_floor:.3f}-{fixed_rag_ceiling:.3f} "
+            f"adaptive={adaptive_rag_floor:.3f}-{adaptive_rag_ceiling:.3f} "
+            f"weight={adaptive_weight:.2f} candidates={len(raw_results)}"
         )
 
-    for entry, raw_rag_score, matches in raw_results:
-        rag_score = calibrate_rag_score(
-            raw_rag_score,
-            floor=rag_floor,
-            ceiling=rag_ceiling,
-        )
+    for (entry, raw_rag_score, matches), rag_score in zip(raw_results, calibrated_scores):
         entry["rag_raw_score"] = raw_rag_score
         entry["rag_score"] = rag_score
         components, _ = score_components(entry, terms)

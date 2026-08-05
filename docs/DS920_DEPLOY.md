@@ -157,10 +157,11 @@ Paper Watch scores are normalized to 0--100. RAG compares title and abstract
 separately against representative chunks, keeps the best chunk per indexed PDF,
 aggregates the top three PDFs with weights 0.6/0.3/0.1, and calibrates raw
 similarity from the configured floor/ceiling to 0--1. The default report cutoff
-is 45. With at least ten candidates, the calibration automatically uses the
-batch's 10th and 95th percentiles. Additional keyword concepts receive
-diminishing weight, and the refreshed profile supplies capped author and journal
-priorities. This requires no Paper Watch database schema change.
+is 45. With at least ten candidates, calibration blends the fixed absolute
+range (65%) with the batch's 10th/95th-percentile range (35%). Additional
+keyword concepts receive diminishing weight, and the refreshed profile supplies
+capped author and journal priorities. This requires no Paper Watch database
+schema change.
 
 Recommended cadence: collect metadata every day, report arXiv every week, and
 report journal groups monthly. Monthly reports are spread across four Mondays
