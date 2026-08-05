@@ -157,10 +157,11 @@ Paper Watch scores are normalized to 0--100. RAG compares title and abstract
 separately against representative chunks, keeps the best chunk per indexed PDF,
 aggregates the top three PDFs with weights 0.6/0.3/0.1, and calibrates raw
 similarity from the configured floor/ceiling to 0--1. The default report cutoff
-is 45. With at least ten candidates, the calibration automatically uses the
-batch's 10th and 95th percentiles. Additional keyword concepts receive
-diminishing weight, and the refreshed profile supplies capped author and journal
-priorities. This requires no Paper Watch database schema change.
+is 45. With at least ten candidates, calibration blends the fixed absolute
+range (65%) with the batch's 10th/95th-percentile range (35%). Additional
+keyword concepts receive diminishing weight, and the refreshed profile supplies
+capped author and journal priorities. This requires no Paper Watch database
+schema change.
 
 Recommended cadence: collect metadata every day, report arXiv every week, and
 report journal groups monthly. Monthly reports are spread across four Mondays
@@ -201,6 +202,20 @@ Dry run only the post-collection RAG enrichment step:
 ```bash
 sudo ./scripts/run_paper_watch.sh --mode rag --dry-run --lookback-days 7
 ```
+
+After deploying a scoring-model update, preview and rescore active stored rows:
+
+```bash
+sudo ./scripts/run_paper_watch.sh --mode rescore --lookback-days 180 --dry-run
+sudo ./scripts/run_paper_watch.sh --mode rescore --lookback-days 180
+```
+
+The second command creates
+`rag_poc/index/paper_watch.sqlite3.backup-YYYYMMDDTHHMMSSZ` before updating
+existing score, reason, and RAG fields. It does not alter the schema and leaves
+already-posted history unchanged. Use `--include-posted` only when historical
+scores also need to be rewritten. RAG rescoring aborts before writing anything
+if any embedding request or reference-index read fails.
 
 Dry run the weekly arXiv report:
 
