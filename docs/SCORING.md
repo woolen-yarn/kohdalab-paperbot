@@ -183,7 +183,7 @@ The write operation provides these safeguards:
 - Creates a timestamped SQLite backup before updating records
 - Does not change the database schema
 - Targets unposted records by default
-- Aborts before any write if the RAG index or Ollama request fails
+- Aborts before any write if the RAG index or llama.cpp request fails
 - Preserves `posted_at`, `updated_at`, `first_seen_at`, and `last_seen_at`
 
 Add `--include-posted` only when posted history must also be rescored.

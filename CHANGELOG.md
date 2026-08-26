@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Migrated PaperBot generation and embeddings from Ollama to two OpenAI-compatible
+  llama.cpp servers on the RTX host.
+- Added a CPU-resident Qwen3-Embedding-4B Q8 service with query-specific retrieval
+  instructions; changing from the former Nomic vector space requires a full re-index.
+- Added configurable llama.cpp temperature, output length, and reasoning settings.
+- Added reproducible generation and embedding evaluators covering RAG grounding,
+  prompt injection, long context, summaries, translation, scientific knowledge,
+  reasoning, hallucination resistance, JSON classification, and retrieval quality.
+- Added Windows startup and firewall scripts for the two llama.cpp services.
+
 ## v1.0.0 - 2026-08-05
 
 First stable release of the KohdaLab DS920+ and RTX PaperBot platform.

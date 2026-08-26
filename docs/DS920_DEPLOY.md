@@ -1,8 +1,8 @@
 # DS920+ Production Deployment
 
 This document describes the production deployment used by KohdaLab PaperBot.
-DS920+ runs the always-on services and scheduled jobs. The RTX PC runs Ollama
-for LLM and embedding workloads.
+DS920+ runs the always-on services and scheduled jobs. The RTX PC runs separate
+llama.cpp servers for LLM generation and embeddings.
 
 ## Roles
 
@@ -15,32 +15,32 @@ flowchart LR
   sync --> pdfs[("PDF archive")]
   watch --> db
   bot --> db
-  bot --> ollama["RTX PC Ollama\nrtx-pc.example.invalid:11434"]
-  sync --> ollama
-  watch --> ollama
+  bot --> llama["RTX PC llama.cpp\nchat :8080 / embedding :8081"]
+  sync --> llama
+  watch --> llama
 ```
 
 | Machine | Responsibility |
 | --- | --- |
 | Synology DS920+ | Docker Compose, Slack bot, Zotero sync, PDF archive, SQLite, scheduler |
-| RTX PC | Ollama models: `nomic-embed-text`, `gpt-oss:20b`, `qwen3:14b` |
+| RTX PC | llama.cpp: selected generation GGUF on GPU; Qwen3-Embedding-4B Q8 on CPU |
 | Slack | DM RAG interface, `#paper`, `#paperbot-log` |
 | Zotero | Source of truth for paper metadata and attachments |
 
 ## 1. RTX PC Checklist
 
-Ollama must be reachable from DS920+:
+Both llama.cpp servers must be reachable from DS920+:
 
 ```bash
-curl http://rtx-pc.example.invalid:11434/api/tags
+curl http://rtx-pc.example.invalid:8080/health
+curl http://rtx-pc.example.invalid:8081/health
 ```
 
-Required models:
+Install the supplied Windows startup task from an elevated PowerShell session:
 
 ```bash
-ollama pull nomic-embed-text
-ollama pull gpt-oss:20b
-ollama pull qwen3:14b
+Copy-Item .\scripts\whale\*.ps1 C:\Users\example\models\paperbot\
+powershell -ExecutionPolicy Bypass -File C:\Users\example\models\paperbot\install_paperbot_llama.ps1
 ```
 
 ## 2. NAS Repository
@@ -70,11 +70,15 @@ Minimum required variables:
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_APP_TOKEN=xapp-...
 
-OLLAMA_BASE_URL=http://rtx-pc.example.invalid:11434
-OLLAMA_CHAT_MODEL=gpt-oss:20b
-OLLAMA_EMBED_MODEL=nomic-embed-text
-PAPERBOT_TRANSLATION_MODEL=qwen3:14b
+LLAMA_CHAT_BASE_URL=http://rtx-pc.example.invalid:8080/v1
+LLAMA_EMBED_BASE_URL=http://rtx-pc.example.invalid:8081/v1
+LLAMA_CHAT_MODEL=paperbot-chat
+LLAMA_EMBED_MODEL=qwen3-embedding-4b
+PAPERBOT_TRANSLATION_MODEL=paperbot-chat
 PAPERBOT_TRANSLATION_ENABLED=true
+LLAMA_TEMPERATURE=0.2
+LLAMA_MAX_TOKENS=1024
+LLAMA_REASONING_BUDGET=0
 
 ZOTERO_LIBRARY_TYPE=group
 ZOTERO_LIBRARY_ID=...
@@ -84,10 +88,15 @@ SYNC_NOTIFY_CHANNEL=#paperbot-log
 SYNC_NOTIFY_MODE=verbose
 
 PAPER_WATCH_CHANNEL=#paper
-PAPER_WATCH_SUMMARY_MODEL=gpt-oss:20b
-PAPER_WATCH_TRANSLATION_MODEL=qwen3:14b
+PAPER_WATCH_SUMMARY_MODEL=paperbot-chat
+PAPER_WATCH_TRANSLATION_MODEL=paperbot-chat
 PAPER_WATCH_TRANSLATION_ENABLED=true
+PAPER_WATCH_CLASSIFICATION_MODEL=paperbot-chat
 ```
+
+The generation model remains resident on the 16 GB GPU. Qwen3-Embedding-4B runs
+on the CPU so retrieval never evicts generation weights. Its query instruction
+is added only to queries; indexed passages are embedded without it.
 
 ## 3. Start PaperBot
 
@@ -120,7 +129,7 @@ sudo ./scripts/sync_zotero_pipeline.sh
 
 The pipeline:
 
-1. checks Ollama embedding connectivity
+1. checks llama.cpp embedding connectivity
 2. fetches Zotero metadata
 3. downloads only missing or changed unique PDFs
 4. incrementally indexes changed PDFs into SQLite and rebuilds the lab interest profile
@@ -309,21 +318,35 @@ Do not commit runtime data.
 
 Run manually with `sudo`, or run DSM tasks as `root`.
 
-`Ollama connection failed`
+`llama.cpp connection failed`
 
 Check the RTX PC is awake and reachable:
 
 ```bash
-curl http://rtx-pc.example.invalid:11434/api/tags
+curl http://rtx-pc.example.invalid:8080/health
+curl http://rtx-pc.example.invalid:8081/health
 ```
 
-`embed=nomic-embed-text missing`
+`llama.cpp did not return every requested embedding`
 
-Pull the embedding model on the RTX PC:
+Check the Qwen3 embedding process and its logs on the RTX PC:
+
+```powershell
+Get-ScheduledTask -TaskName "PaperBot llama.cpp"
+Get-Content C:\Users\example\models\paperbot\logs\embedding.stderr.log -Tail 100
+```
+
+After switching from Nomic to Qwen3 embeddings, run a full RAG re-index. Old
+Nomic vectors must not be mixed with the new 2,560-dimensional vector space.
 
 ```bash
-ollama pull nomic-embed-text
+cd /volume1/docker/paperbot
+sudo docker compose -f docker-compose.nas.yml run --rm paperbot \
+  python rag_poc/ingest.py --rebuild
 ```
+
+Current code also stores the embedding-model label in SQLite and refuses an
+incremental ingest when it detects a legacy or different embedding model.
 
 `kohdalab-paperbot was unexpectedly stopped` after a scheduled sync
 

@@ -61,8 +61,8 @@ run_or_notify() {
 step "Ensure runtime directories"
 mkdir -p rag_poc/papers/zotero rag_poc/index logs
 
-step "Check Ollama embedding endpoint"
-run_or_notify compose_run zotero python -c 'import os; from rag_poc.ollama_client import embed, base_url; model=os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text"); embed("paperbot connectivity test", model, timeout=60); print(f"ok {base_url()} {model}")'
+step "Check llama.cpp embedding endpoint"
+run_or_notify compose_run zotero python -c 'import os; from rag_poc.llama_client import embed; model=os.environ.get("LLAMA_EMBED_MODEL", "qwen3-embedding-4b"); url=os.environ.get("LLAMA_EMBED_BASE_URL", "default"); embed("paperbot connectivity test", model, timeout=60); print(f"ok {url} {model}")'
 
 step "Sync Zotero metadata and unique PDFs"
 run_or_notify compose_run zotero python rag_poc/zotero_sync.py $ZOTERO_ARGS
