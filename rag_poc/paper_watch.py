@@ -20,9 +20,9 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 try:
-    from .ollama_client import OllamaError, embed_many, generate
+    from .llama_client import OllamaError, embed_many, generate
 except ImportError:
-    from ollama_client import OllamaError, embed_many, generate
+    from llama_client import OllamaError, embed_many, generate
 
 
 ROOT = Path(__file__).resolve().parent
@@ -1601,7 +1601,9 @@ def dedupe_entries(entries: list[dict]) -> list[dict]:
 def paper_watch_embed_model() -> str:
     return os.environ.get(
         "PAPER_WATCH_EMBED_MODEL",
-        os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
+        os.environ.get(
+            "LLAMA_EMBED_MODEL", os.environ.get("OLLAMA_EMBED_MODEL", "paperbot-embed")
+        ),
     )
 
 
@@ -2384,7 +2386,10 @@ def classify_entries(entries: list[dict]) -> None:
 def classification_model() -> str:
     return os.environ.get(
         "PAPER_WATCH_CLASSIFICATION_MODEL",
-        os.environ.get("PAPERBOT_TRANSLATION_MODEL", os.environ.get("OLLAMA_CHAT_MODEL", "")),
+        os.environ.get(
+            "PAPERBOT_TRANSLATION_MODEL",
+            os.environ.get("LLAMA_CHAT_MODEL", os.environ.get("OLLAMA_CHAT_MODEL", "")),
+        ),
     ).strip()
 
 
@@ -2849,7 +2854,10 @@ def nearest_pdf_label(item: dict) -> str:
 def summary_model() -> str:
     return os.environ.get(
         "PAPER_WATCH_SUMMARY_MODEL",
-        os.environ.get("OLLAMA_CHAT_MODEL", "gpt-oss:20b"),
+        os.environ.get(
+            "LLAMA_CHAT_MODEL",
+            os.environ.get("OLLAMA_CHAT_MODEL", "paperbot-chat"),
+        ),
     )
 
 

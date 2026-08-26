@@ -10,10 +10,11 @@ DS920+ production setup described in the top-level README.
 | --- | --- |
 | `zotero_sync.py` | Fetch Zotero metadata, deduplicate papers, and download unique PDFs |
 | `ingest.py` | Extract PDF text, chunk it, embed chunks, and store them in SQLite |
-| `ask.py` | Search SQLite and generate grounded answers through Ollama |
+| `ask.py` | Search SQLite and generate grounded answers through llama.cpp |
 | `paper_watch.py` | Fetch new papers, score them, and post recommendations to Slack |
 | `lab_profile.py` | Build the lab interest profile from the indexed paper collection |
-| `ollama_client.py` | Minimal Ollama chat and embedding client |
+| `llama_client.py` | OpenAI-compatible llama.cpp generation and embedding client |
+| `ollama_client.py` | Legacy client retained for historical benchmark reproduction |
 | `sync_notify.py` | Send pipeline success/failure summaries to Slack |
 
 ## Data Layout
@@ -118,7 +119,7 @@ Paper Watch uses a 0--100 recommendation score: 45% grouped keyword relevance,
 35% calibrated multi-PDF RAG relevance, 10% profile theme combinations, 5%
 profile/configured priority authors, and 5% profile/configured journal priority.
 It embeds candidate titles and abstracts separately and aggregates the top three
-distinct indexed PDFs. The two texts are sent together through Ollama's batch
+distinct indexed PDFs. The two texts are sent together through llama.cpp's batch
 embedding API to avoid an extra network round trip per candidate.
 Keyword concepts use diminishing returns. Sufficiently large batches blend 35%
 of their 10th/95th-percentile relative calibration with 65% of the fixed

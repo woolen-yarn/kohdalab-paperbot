@@ -54,14 +54,44 @@ def _post_json(path: str, payload: dict, timeout: int = 180) -> dict:
         raise OllamaError(f"Ollama connection failed: {exc}") from exc
 
 
+def _generation_payload(model: str) -> dict:
+    """Return shared generation settings for both Ollama endpoints."""
+    try:
+        num_ctx = max(1024, int(os.environ.get("OLLAMA_NUM_CTX", "8192")))
+    except ValueError:
+        num_ctx = 8192
+    try:
+        temperature = max(0.0, float(os.environ.get("OLLAMA_TEMPERATURE", "0.2")))
+    except ValueError:
+        temperature = 0.2
+
+    raw_think = os.environ.get("OLLAMA_THINK", "false").strip().lower()
+    if model.lower().startswith("gpt-oss"):
+        # Ollama's gpt-oss family supports reasoning levels but not think=false.
+        think: bool | str = raw_think if raw_think in {"low", "medium", "high"} else "low"
+    elif raw_think in {"low", "medium", "high"}:
+        think = raw_think
+    else:
+        think = raw_think in {"1", "true", "yes", "on"}
+
+    return {
+        "model": model,
+        "stream": False,
+        "think": think,
+        "keep_alive": os.environ.get("OLLAMA_KEEP_ALIVE", "10m").strip() or "10m",
+        "options": {
+            "num_ctx": num_ctx,
+            "temperature": temperature,
+        },
+    }
+
+
 def generate(prompt: str, model: str, timeout: int = 240) -> str:
+    payload = _generation_payload(model)
+    payload["prompt"] = prompt
     response = _post_json(
         "/api/generate",
-        {
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-        },
+        payload,
         timeout=timeout,
     )
     text = response.get("response", "").strip()
@@ -69,13 +99,11 @@ def generate(prompt: str, model: str, timeout: int = 240) -> str:
         return text
 
     # Some chat-tuned models are more reliable through Ollama's chat endpoint.
+    payload = _generation_payload(model)
+    payload["messages"] = [{"role": "user", "content": prompt}]
     response = _post_json(
         "/api/chat",
-        {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": False,
-        },
+        payload,
         timeout=timeout,
     )
     message = response.get("message") or {}

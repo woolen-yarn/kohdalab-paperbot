@@ -8,16 +8,21 @@ from functools import lru_cache
 from pathlib import Path
 
 try:
-    from .ollama_client import OllamaError, embed, generate
+    from .llama_client import OllamaError, embed, generate
 except ImportError:
-    from ollama_client import OllamaError, embed, generate
+    from llama_client import OllamaError, embed, generate
 
 
 ROOT = Path(__file__).resolve().parent
 INDEX_DB_PATH = ROOT / "index" / "chunks.sqlite3"
 
-CHAT_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:8b")
-EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+CHAT_MODEL = os.environ.get(
+    "LLAMA_CHAT_MODEL",
+    os.environ.get("OLLAMA_CHAT_MODEL", "paperbot-chat"),
+)
+EMBED_MODEL = os.environ.get(
+    "LLAMA_EMBED_MODEL", os.environ.get("OLLAMA_EMBED_MODEL", "paperbot-embed")
+)
 TRANSLATION_MODEL = os.environ.get("PAPERBOT_TRANSLATION_MODEL", "").strip()
 TOP_K = int(os.environ.get("PAPERBOT_TOP_K", "6"))
 SHORT_TOP_K = int(os.environ.get("PAPERBOT_SHORT_TOP_K", "3"))

@@ -10,9 +10,9 @@ from pathlib import Path
 import fitz
 
 try:
-    from .ollama_client import OllamaError, embed
+    from .llama_client import OllamaError, embed_document as embed
 except ImportError:
-    from ollama_client import OllamaError, embed
+    from llama_client import OllamaError, embed_document as embed
 
 
 ROOT = Path(__file__).resolve().parent
@@ -21,7 +21,9 @@ INDEX_DIR = ROOT / "index"
 INDEX_DB_PATH = INDEX_DIR / "chunks.sqlite3"
 INGEST_REPORT_PATH = INDEX_DIR / "ingest_report.json"
 
-EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+EMBED_MODEL = os.environ.get(
+    "LLAMA_EMBED_MODEL", os.environ.get("OLLAMA_EMBED_MODEL", "paperbot-embed")
+)
 CHUNK_CHARS = int(os.environ.get("PAPERBOT_CHUNK_CHARS", "1800"))
 CHUNK_OVERLAP = int(os.environ.get("PAPERBOT_CHUNK_OVERLAP", "250"))
 
@@ -177,6 +179,14 @@ def init_index_db(path: Path, rebuild: bool = False) -> sqlite3.Connection:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS index_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_sha256 ON chunks(sha256)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pdf_documents_sha256 ON pdf_documents(sha256)")
@@ -185,8 +195,36 @@ def init_index_db(path: Path, rebuild: bool = False) -> sqlite3.Connection:
     if rebuild:
         conn.execute("DELETE FROM chunks")
         conn.execute("DELETE FROM pdf_documents")
+        conn.execute("DELETE FROM index_metadata")
 
     return conn
+
+
+def validate_embedding_model(
+    conn: sqlite3.Connection, model: str, *, rebuild: bool = False
+) -> None:
+    """Prevent vectors from different embedding models sharing one index."""
+    row = conn.execute(
+        "SELECT value FROM index_metadata WHERE key = 'embedding_model'"
+    ).fetchone()
+    stored_model = row[0] if row else None
+    chunk_count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+
+    if chunk_count and not rebuild and stored_model != model:
+        previous = stored_model or "unknown (legacy index)"
+        raise SystemExit(
+            "Embedding model changed from "
+            f"{previous!r} to {model!r}. Run ingest with --rebuild so vectors "
+            "from different models are never mixed."
+        )
+
+    conn.execute(
+        """
+        INSERT INTO index_metadata (key, value) VALUES ('embedding_model', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (model,),
+    )
 
 
 def backfill_pdf_documents(conn: sqlite3.Connection) -> None:
@@ -467,6 +505,7 @@ def main() -> None:
     current_sources = {source_name(pdf) for pdf in pdfs}
     conn = init_index_db(INDEX_DB_PATH, rebuild=args.rebuild)
     try:
+        validate_embedding_model(conn, EMBED_MODEL, rebuild=args.rebuild)
         backfill_pdf_documents(conn)
         removed_sources = cleanup_removed_sources(conn, current_sources, args.source_prefix)
         existing_docs = load_pdf_documents(conn)
@@ -580,8 +619,9 @@ def main() -> None:
                 except OllamaError as exc:
                     raise SystemExit(
                         f"Embedding failed for {pdf.name}: {exc}\n"
-                        f"Check that the RTX PC has the embedding model: "
-                        f"ollama pull {EMBED_MODEL}"
+                        "Check the RTX PC llama.cpp embedding server at "
+                        f"{os.environ.get('LLAMA_EMBED_BASE_URL', 'the configured endpoint')} "
+                        f"with model label {EMBED_MODEL}."
                     ) from exc
 
                 record = {

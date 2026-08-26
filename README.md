@@ -5,7 +5,7 @@
 [![Release](https://img.shields.io/github/v/release/woolen-yarn/kohdalab-paperbot?sort=semver)](https://github.com/woolen-yarn/kohdalab-paperbot/releases)
 [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](pyproject.toml)
 
-KohdaLab PaperBot collects, searches, and recommends research papers for the lab. Zotero remains the source of truth, a Synology NAS stores PDFs and SQLite databases, an RTX PC runs Ollama for embeddings and generation, and Slack provides the user interface.
+KohdaLab PaperBot collects, searches, and recommends research papers for the lab. Zotero remains the source of truth, a Synology NAS stores PDFs and SQLite databases, an RTX PC runs two llama.cpp servers for generation and embeddings, and Slack provides the user interface.
 
 ## What It Does
 
@@ -21,7 +21,7 @@ KohdaLab PaperBot collects, searches, and recommends research papers for the lab
 | Component | Responsibility |
 | --- | --- |
 | Synology DS920+ | Docker, scheduled jobs, PDFs, SQLite, and the Slack bot |
-| RTX PC | Ollama embeddings, answer generation, and Japanese translation |
+| RTX PC | llama.cpp generation, CPU embeddings, and Japanese translation |
 | Zotero | Source of truth for paper metadata and PDF attachments |
 | Slack | RAG questions, paper recommendations, and operations notices |
 
@@ -35,7 +35,7 @@ The production deployment uses:
 /volume1/docker/paperbot
 ```
 
-Follow the [DS920+ deployment and operations guide](docs/DS920_DEPLOY.md) for the full `.env`, Ollama, Slack, Zotero, and DSM Task Scheduler setup.
+Follow the [DS920+ deployment and operations guide](docs/DS920_DEPLOY.md) for the full `.env`, llama.cpp, Slack, Zotero, and DSM Task Scheduler setup.
 
 The basic startup and first synchronization are:
 
@@ -49,7 +49,7 @@ sudo ./scripts/sync_zotero_pipeline.sh
 ## Slack Usage
 
 - Send the bot a direct message to query the indexed papers with RAG.
-- Send `status` to inspect Ollama, SQLite, Zotero, and index status.
+- Send `status` to inspect llama.cpp, SQLite, Zotero, and index status.
 - Send `sources` to display the references used for the previous answer.
 - Read `#paper` for Paper Watch recommendations.
 - Read `#paperbot-log` for synchronization and scheduled-job results.
@@ -107,6 +107,7 @@ Git does not track `.env`, PDFs, SQLite databases, embeddings, or logs.
 - [DS920+ deployment and operations](docs/DS920_DEPLOY.md): production setup, schedules, upgrades, and troubleshooting.
 - [Scoring](docs/SCORING.md): Term scoring, RAG, final scoring, and rescoring.
 - [Architecture](docs/ARCHITECTURE.md): relationships among the NAS, RTX PC, Slack, and Zotero.
+- [Local model evaluation](docs/MODEL_EVALUATION.md): PaperBot task benchmark and selected llama.cpp configuration.
 - [RAG internals](rag_poc/README.md): synchronization, ingest, retrieval, and Paper Watch.
 - [Git workflow](docs/GIT_WORKFLOW.md): `origin`, `personal`, and pull request workflow.
 - [Changelog](CHANGELOG.md): release history.

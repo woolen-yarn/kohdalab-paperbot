@@ -201,7 +201,7 @@ def command_help() -> str:
             ":robot_face: *PaperBot commands / コマンド*",
             "`help` / `ヘルプ`  Show this help / このヘルプを表示",
             "`model` / `モデル`  Show LLM and embedding settings / LLM・embedding設定を表示",
-            "`status` / `状態`  Show DB counts and Ollama health / DB件数とOllama疎通を表示",
+            "`status` / `状態`  Show DB counts and llama.cpp health / DB件数とllama.cpp疎通を表示",
             "`sources` / `根拠`  Show the previous source list / 直前のSourcesを表示",
             "`recent` / `最近`  Show recent local PDFs / 最近のPDFを表示",
             "",
@@ -219,9 +219,10 @@ def command_model() -> str:
     return "\n".join(
         [
             ":brain: *Current model settings / 現在のモデル設定*",
-            f"`OLLAMA_BASE_URL`: `{os.environ.get('OLLAMA_BASE_URL', 'default')}`",
-            f"`OLLAMA_CHAT_MODEL`: `{CHAT_MODEL}`",
-            f"`OLLAMA_EMBED_MODEL`: `{EMBED_MODEL}`",
+            f"`LLAMA_CHAT_BASE_URL`: `{os.environ.get('LLAMA_CHAT_BASE_URL', 'default')}`",
+            f"`LLAMA_EMBED_BASE_URL`: `{os.environ.get('LLAMA_EMBED_BASE_URL', 'default')}`",
+            f"`LLAMA_CHAT_MODEL`: `{CHAT_MODEL}`",
+            f"`LLAMA_EMBED_MODEL`: `{EMBED_MODEL}`",
             f"`PAPERBOT_TRANSLATION_MODEL`: `{TRANSLATION_MODEL or 'disabled'}`",
             f"`PAPERBOT_TRANSLATION_ENABLED`: `{translation_enabled()}`",
             f"`PAPERBOT_TOP_K`: `{TOP_K}`",
@@ -248,28 +249,28 @@ def table_exists(conn: sqlite3.Connection, name: str) -> bool:
     )
 
 
-def ollama_status() -> str:
-    base_url = os.environ.get("OLLAMA_BASE_URL", "http://rtx-pc.example.invalid:11434").rstrip("/")
+def llama_endpoint_status(base_url: str) -> str:
+    health_url = f"{base_url.rstrip('/').removesuffix('/v1')}/health"
     try:
-        with urllib.request.urlopen(f"{base_url}/api/tags", timeout=3) as res:
-            body = res.read().decode("utf-8")
+        with urllib.request.urlopen(health_url, timeout=3) as response:
+            body = response.read().decode("utf-8")
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         return f"`unreachable` ({exc})"
+    return "`ok`" if '"status":"ok"' in body.replace(" ", "") else "`loading`"
 
-    model_names = set(re.findall(r'"name"\s*:\s*"([^"]+)"', body))
-    chat_ok = CHAT_MODEL in model_names
-    embed_ok = EMBED_MODEL in model_names
-    translation_ok = not TRANSLATION_MODEL or TRANSLATION_MODEL in model_names
+
+def llama_status() -> str:
+    chat_url = os.environ.get("LLAMA_CHAT_BASE_URL", "http://rtx-pc.example.invalid:8080/v1")
+    embed_url = os.environ.get("LLAMA_EMBED_BASE_URL", "http://rtx-pc.example.invalid:8081/v1")
     return (
-        f"`ok` chat=`{CHAT_MODEL}` {'ok' if chat_ok else 'missing'} / "
-        f"embed=`{EMBED_MODEL}` {'ok' if embed_ok else 'missing'} / "
-        f"translate=`{TRANSLATION_MODEL or 'disabled'}` {'ok' if translation_ok else 'missing'}"
+        f"chat={llama_endpoint_status(chat_url)} `{CHAT_MODEL}` / "
+        f"embed={llama_endpoint_status(embed_url)} `{EMBED_MODEL}`"
     )
 
 
 def command_status() -> str:
     lines = [":satellite: *PaperBot status / 状態*"]
-    lines.append(f"Ollama: {ollama_status()}")
+    lines.append(f"llama.cpp: {llama_status()}")
 
     if not INDEX_DB_PATH.exists():
         lines.append(f"SQLite: `missing` `{INDEX_DB_PATH}`")
@@ -517,8 +518,8 @@ def handle_dm(event, client):
 
 def main() -> None:
     logger.info(
-        "paperbot_start ollama_base_url=%s chat_model=%s embed_model=%s top_k=%s",
-        os.environ.get("OLLAMA_BASE_URL", "default"),
+        "paperbot_start llama_chat_url=%s chat_model=%s embed_model=%s top_k=%s",
+        os.environ.get("LLAMA_CHAT_BASE_URL", "default"),
         CHAT_MODEL,
         EMBED_MODEL,
         TOP_K,

@@ -22,10 +22,9 @@ flowchart LR
       archive[("PDF archive")]
     end
 
-    subgraph gpu["RTX PC\nOllama AI engine"]
-      embed["nomic-embed-text"]
-      english["gpt-oss:20b"]
-      japanese["qwen3:14b"]
+    subgraph gpu["RTX PC\nllama.cpp AI engine"]
+      embed["Qwen3-Embedding-4B Q8\nCPU server :8081"]
+      generation["Selected GGUF\nGPU server :8080\nRAG + summary + translation"]
     end
   end
 
@@ -44,8 +43,7 @@ flowchart LR
   compose --> archive
   compose --> embed
   bot --> sqlite
-  bot --> english
-  bot --> japanese
+  bot --> generation
   bot <--> dm
   scheduler --> paper
   scheduler --> log
@@ -56,7 +54,7 @@ flowchart LR
   classDef slack fill:#f5f3ff,stroke:#7c3aed,color:#2e1065
   class zotero,arxiv,journals external
   class compose,bot,scheduler,sqlite,archive nas
-  class embed,english,japanese gpu
+  class embed,generation gpu
   class dm,paper,log slack
 ```
 
@@ -69,19 +67,19 @@ sequenceDiagram
   participant Zotero as Zotero API
   participant DB as SQLite
   participant PDF as PDF Archive
-  participant Ollama as RTX PC Ollama
+  participant Llama as RTX PC llama.cpp
   participant Slack as Slack paperbot-log
 
   DSM->>Sync: run daily at 01:00
-  Sync->>Ollama: verify embedding model
+  Sync->>Llama: verify embedding server
   Sync->>Zotero: fetch changed metadata
   Zotero-->>Sync: papers + attachment metadata
   Sync->>DB: upsert papers and duplicate flags
   Sync->>Zotero: download only missing/changed unique PDFs
   Sync->>PDF: store PDF files
   Sync->>DB: reuse unchanged chunks
-  Sync->>Ollama: embed only new/changed chunks
-  Ollama-->>Sync: embedding vectors
+  Sync->>Llama: embed only new/changed chunks
+  Llama-->>Sync: embedding vectors
   Sync->>DB: save chunks and vectors
   Sync->>DB: rebuild lab interest profile
   Sync->>Slack: post success/failure summary
@@ -100,8 +98,8 @@ flowchart TD
 
   report["Weekly/monthly report task\nMonday 09:30"] --> select["Select stored candidates\nscope + min score + post limit 5"]
   db --> select
-  select --> explain["Generate English commentary\ngpt-oss:20b"]
-  explain --> translate["Translate to Japanese\nqwen3:14b"]
+  select --> explain["Generate English commentary\nselected llama.cpp GGUF"]
+  explain --> translate["Translate to Japanese\nsame resident model"]
   translate --> post["Post compact messages\none paper per Slack post"]
   post --> db
 
@@ -120,13 +118,13 @@ flowchart TD
 ```mermaid
 flowchart LR
   user["Lab member"] -->|"DM question"| bot["PaperBot"]
-  bot -->|"embed query"| embed["nomic-embed-text"]
+  bot -->|"embed query"| embed["Qwen3-Embedding-4B Q8"]
   bot -->|"retrieve chunks"| db[("SQLite RAG index")]
   db -->|"top sources"| bot
-  bot -->|"grounded answer"| llm["gpt-oss:20b"]
+  bot -->|"grounded answer"| llm["selected llama.cpp GGUF"]
   llm --> bot
-  bot -->|"Japanese translation when needed"| qwen["qwen3:14b"]
-  qwen --> bot
+  bot -->|"Japanese translation when needed"| translation["same resident generation model"]
+  translation --> bot
   bot -->|"answer + sources"| user
 
   classDef userCls fill:#f5f3ff,stroke:#7c3aed,color:#2e1065
@@ -135,7 +133,7 @@ flowchart LR
   classDef dataCls fill:#f8fafc,stroke:#64748b,color:#0f172a
   class user userCls
   class bot botCls
-  class embed,llm,qwen aiCls
+  class embed,llm,translation aiCls
   class db dataCls
 ```
 
@@ -146,6 +144,6 @@ flowchart LR
 | Paper metadata | Zotero | Zotero + SQLite mirror | Zotero remains the source of truth |
 | PDFs | Zotero / NAS | `rag_poc/papers/zotero/` | Git never stores PDFs |
 | RAG index | PaperBot | `rag_poc/index/chunks.sqlite3` | Incremental and rebuildable |
-| LLM models | Ollama | RTX PC | No model weights on the NAS |
+| LLM models | llama.cpp | RTX PC | No model weights on the NAS |
 | Slack UI | Slack app | Slack workspace | Socket Mode, no public NAS endpoint |
 | Secrets | Lab admin | NAS-local `.env` | Never committed |
