@@ -54,6 +54,7 @@ REQUIRED_ENV = (
     "GITHUB_RUN_ATTEMPT",
     "GITHUB_SERVER_URL",
     "GITHUB_REF_NAME",
+    "GITHUB_REF",
 )
 QUALIFICATION = (
     "Software-only qualification: built and tested by GitHub Actions. "
@@ -100,7 +101,7 @@ def read_environment(environ: dict[str, str]) -> dict[str, str]:
         raise PublishError("Missing environment: " + ", ".join(missing))
     env = {key: environ[key] for key in REQUIRED_ENV}
     branch = environ.get("DISTRIBUTION_BRANCH") or "main"
-    if env["GITHUB_REF_NAME"] != branch:
+    if env["GITHUB_REF"] != f"refs/heads/{branch}":
         raise PublishError(
             f"Refusing to publish from {env['GITHUB_REF_NAME']!r}; only {branch!r} publishes"
         )
@@ -122,7 +123,7 @@ def cargo_version(root: Path) -> str | None:
 
 
 def release_tag(env: dict[str, str]) -> str:
-    return f"build-{env['GITHUB_RUN_NUMBER']}-{env['GITHUB_RUN_ATTEMPT']}"
+    return f"build-{env['GITHUB_RUN_ID']}-{env['GITHUB_RUN_ATTEMPT']}"
 
 
 def stage_directory(directory: Path, stage: Path, reserved: set[str]) -> list[str]:
@@ -222,7 +223,9 @@ def release_notes(info: dict, digests: dict[str, str]) -> str:
         f"- Portable: `{info['portable_alias']}` (copy of `{info['portable']}`)",
         f"- Source: `{info['source_archive']}`",
         "",
-        f"**{info['qualification']}**",
+        f"**{QUALIFICATION}**",
+        "",
+        QUALIFICATION + " " + info["qualification"],
         "",
         "| File | SHA-256 |",
         "| --- | --- |",
@@ -251,6 +254,10 @@ def gh_exists(api_path: str) -> bool:
 
 
 def refuse_existing(repository: str, tag: str) -> None:
+    tags = run(["gh", "api", "--paginate", f"repos/{repository}/releases",
+                "--jq", ".[].tag_name"]).stdout.splitlines()
+    if tag in tags:
+        raise PublishError(f"Release {tag} already exists; refusing to replace it")
     if gh_exists(f"repos/{repository}/releases/tags/{tag}"):
         raise PublishError(f"Release {tag} already exists; refusing to replace it")
     if gh_exists(f"repos/{repository}/git/ref/tags/{tag}"):
@@ -270,7 +277,7 @@ def write_summary(info: dict, url: str, digests: dict[str, str], server: str) ->
         "",
         f"Release: {url}",
         "",
-        info["qualification"],
+        QUALIFICATION + " " + info["qualification"],
         "",
         "| File | SHA-256 |",
         "| --- | --- |",
@@ -311,6 +318,8 @@ def publish(arguments: argparse.Namespace) -> None:
     if archive_suffix(alias) != archive_suffix(portable):
         raise PublishError(f"--alias {alias} must keep the {archive_suffix(portable)} suffix")
     if portable != alias:
+        if alias in staged:
+            raise PublishError(f"Alias collides with an input file: {alias}")
         shutil.copyfile(STAGE / portable, STAGE / alias)
     if arguments.source_alias:
         # Source-only repositories: the tested portable already is the source.
@@ -330,7 +339,16 @@ def publish(arguments: argparse.Namespace) -> None:
     notes = STAGE.parent / "distribution-release-notes.md"
     notes.write_text(release_notes(info, digests), encoding="utf-8")
     title = f"{repository.split('/')[1]} {info['version'] or sha[:12]} ({tag})"
-    run(["gh", "release", "create", tag, "--repo", repository, "--draft",
+    # Creating the ref is atomic: a concurrent publisher cannot replace this tag.
+    ref_body = STAGE.parent / "distribution-tag.json"
+    ref_body.write_text(json.dumps({"ref": f"refs/tags/{tag}", "sha": sha}), encoding="utf-8")
+    run(["gh", "api", "--method", "POST", f"repos/{repository}/git/refs",
+         "--input", str(ref_body)])
+    tagged = json.loads(run(["gh", "api", f"repos/{repository}/commits/{tag}"]).stdout)["sha"]
+    if tagged != sha:
+        raise PublishError("New tag does not resolve to the tested commit")
+
+    run(["gh", "release", "create", tag, "--repo", repository, "--draft", "--verify-tag",
          "--target", sha, "--title", title, "--notes-file", str(notes),
          *[str(STAGE / name) for name in sorted(digests)]])
     print(f"Created draft release {tag}; verifying uploaded assets")
@@ -342,20 +360,20 @@ def publish(arguments: argparse.Namespace) -> None:
     if problems:
         raise PublishError("Uploaded assets do not match staged files:\n  " + "\n  ".join(problems))
 
-    # The draft does not own a tag yet; make sure nobody created one meanwhile.
-    if gh_exists(f"repos/{repository}/git/ref/tags/{tag}"):
-        raise PublishError(f"Tag {tag} appeared before publishing; refusing to reuse it")
-    run(["gh", "release", "edit", tag, "--repo", repository, "--draft=false", "--latest"])
-
-    final = view_release(repository, tag)
-    problems = inventory_problems(expected, final.get("assets", []))
-    if problems:
-        raise PublishError("Published files differ: " + ", ".join(problems))
-    if final.get("isDraft"):
-        raise PublishError(f"Release {tag} is still a draft after publishing")
-    tagged = json.loads(run(["gh", "api", f"repos/{repository}/commits/{tag}"]).stdout)["sha"]
-    if tagged != sha:
-        raise PublishError(f"Published tag {tag} points to {tagged}, expected {sha}")
+    try:
+        run(["gh", "release", "edit", tag, "--repo", repository, "--draft=false", "--latest"])
+        final = view_release(repository, tag)
+        if final.get("isDraft") or final.get("targetCommitish") != sha:
+            raise PublishError("Published release identity differs from the verified draft")
+        problems = inventory_problems(expected, final.get("assets", []))
+        if problems:
+            raise PublishError("Published files differ: " + ", ".join(problems))
+        tagged = json.loads(run(["gh", "api", f"repos/{repository}/commits/{tag}"]).stdout)["sha"]
+        if tagged != sha:
+            raise PublishError(f"Published tag {tag} points to {tagged}, expected {sha}")
+    except Exception:
+        run(["gh", "release", "edit", tag, "--repo", repository, "--draft=true"], check=False)
+        raise
     write_summary(info, final["url"], digests, server)
 
 

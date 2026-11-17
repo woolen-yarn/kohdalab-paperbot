@@ -20,6 +20,7 @@ ENV = {
     "GITHUB_RUN_ATTEMPT": "2",
     "GITHUB_SERVER_URL": "https://github.com",
     "GITHUB_REF_NAME": "main",
+    "GITHUB_REF": "refs/heads/main",
 }
 
 
@@ -37,6 +38,10 @@ class FakeGitHub:
             out = SHA
         elif command[:2] == ["git", "archive"]:
             Path(command[command.index("-o") + 1]).write_bytes(b"source")
+        elif command[:3] == ["gh", "api", "--paginate"]:
+            out = "build-9-2" if self.existing else ""
+        elif command[:3] == ["gh", "api", "--method"]:
+            pass
         elif command[:2] == ["gh", "api"] and "/commits/" in command[2]:
             out = json.dumps({"sha": SHA})
         elif command[:2] == ["gh", "api"]:
@@ -53,7 +58,7 @@ class FakeGitHub:
         elif command[:3] == ["gh", "release", "view"]:
             out = json.dumps({
                 "assets": list(self.assets.values()), "isDraft": not self.published,
-                "tagName": "build-12-2", "targetCommitish": SHA, "url": "https://example/r",
+                "tagName": "build-9-2", "targetCommitish": SHA, "url": "https://example/r",
             })
         return subprocess.CompletedProcess(command, code, out, err)
 
@@ -89,13 +94,22 @@ class PublishDistributionTests(unittest.TestCase):
             "BUILD-INFO.json", "SHA256SUMS.txt", "check.json", "iv-1.0.2-windows-x64.zip",
             "iv-build-source.zip", "iv-windows-x64.zip",
         ])
-        self.assertIn(["gh", "release", "edit", "build-12-2", "--repo", "owner/iv",
+        self.assertIn(["gh", "release", "edit", "build-9-2", "--repo", "owner/iv",
                        "--draft=false", "--latest"], fake.calls)
         info = json.loads((self.root / "build/distribution-stage/BUILD-INFO.json").read_text())
         self.assertEqual(
             (info["version"], info["signing"], info["hardware"], info["qualification"]),
             ("1.0.2", "unsigned", "not tested", "software-only"),
         )
+
+    def test_alias_collision_is_refused(self):
+        (self.dist / self.args.alias).write_bytes(b"unrelated")
+        with self.assertRaisesRegex(p.PublishError, "Alias collides"):
+            self.publish(FakeGitHub())
+
+    def test_tag_named_main_is_refused(self):
+        with self.assertRaisesRegex(p.PublishError, "only 'main'"):
+            self.publish(FakeGitHub(), {**ENV, "GITHUB_REF": "refs/tags/main"})
 
     def test_existing_fixed_archive_name_is_valid(self):
         portable = self.dist / "iv-source.zip"
@@ -124,7 +138,7 @@ class PublishDistributionTests(unittest.TestCase):
     def test_other_branches_are_refused(self):
         fake = FakeGitHub()
         with self.assertRaisesRegex(p.PublishError, "only 'main'"):
-            self.publish(fake, {**ENV, "GITHUB_REF_NAME": "feature"})
+            self.publish(fake, {**ENV, "GITHUB_REF_NAME": "feature", "GITHUB_REF": "refs/heads/feature"})
         self.assertEqual(fake.calls, [])
 
     def test_portable_must_match_exactly_once(self):

@@ -14,7 +14,7 @@ name: Distribute
 permissions:
   contents: read
 concurrency:
-  group: distribution
+  group: distribution-${{ github.event_name }}
   cancel-in-progress: false
 jobs:
   validate:
