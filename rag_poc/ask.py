@@ -9,8 +9,10 @@ from pathlib import Path
 
 try:
     from .llama_client import OllamaError, embed, generate
+    from .rag_embeddings import require_index_model, require_matching_dimensions
 except ImportError:
     from llama_client import OllamaError, embed, generate
+    from rag_embeddings import require_index_model, require_matching_dimensions
 
 
 ROOT = Path(__file__).resolve().parent
@@ -114,6 +116,7 @@ def translation_enabled() -> bool:
 
 
 def cosine(a: list[float], b: list[float]) -> float:
+    require_matching_dimensions(a, b)
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(y * y for y in b))
@@ -293,6 +296,8 @@ def load_chunks_for_mtime(_mtime_ns: int) -> tuple[dict, ...]:
             """
         )
         for row in rows:
+            if not chunks:
+                require_index_model(conn, EMBED_MODEL)
             metadata = metadata_by_source.get(row["source"], {})
             chunks.append(
                 {

@@ -6,6 +6,33 @@ from rag_poc import paper_watch
 
 
 class PaperWatchScoringTests(unittest.TestCase):
+    def test_arxiv_query_expands_profile_and_reserves_material_terms(self):
+        terms = {"pl": 1000, "electric field": 999, "sns": 1}
+        terms.update({f"research phrase {i}": 100 - i for i in range(75)})
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            query = paper_watch.arxiv_query(terms, 7)
+
+        self.assertEqual(query.count('all:"'), 60)
+        self.assertEqual(query.count('all:"sns"'), 1)
+        self.assertIn('all:"tin monosulfide"', query)
+        self.assertIn('all:"research phrase 53"', query)
+        self.assertNotIn('all:"research phrase 54"', query)
+        self.assertNotIn('all:"pl"', query)
+        self.assertNotIn('all:"electric field"', query)
+        self.assertIn(") AND submittedDate:[", query)
+
+    def test_arxiv_query_respects_custom_search_settings(self):
+        with mock.patch.dict(
+            os.environ,
+            {"PAPER_WATCH_TERMS": "pl:5,kerr:1", "PAPER_WATCH_ARXIV_TERM_LIMIT": "1"},
+            clear=True,
+        ):
+            self.assertEqual(paper_watch.arxiv_query(paper_watch.profile_terms()), 'all:"pl"')
+
+        with mock.patch.dict(os.environ, {"PAPER_WATCH_ARXIV_QUERY": "cat:cond-mat"}, clear=True):
+            self.assertEqual(paper_watch.arxiv_query({"sns": 1}), "cat:cond-mat")
+
     def test_keyword_synonyms_use_only_strongest_group_match(self):
         entry = {
             "title": "Persistent Spin Helix and PSH in GaAs",

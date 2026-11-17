@@ -21,8 +21,10 @@ from slack_sdk.errors import SlackApiError
 
 try:
     from .llama_client import OllamaError, embed_many, generate
+    from .rag_embeddings import require_index_model, require_matching_dimensions
 except ImportError:
     from llama_client import OllamaError, embed_many, generate
+    from rag_embeddings import require_index_model, require_matching_dimensions
 
 
 ROOT = Path(__file__).resolve().parent
@@ -970,12 +972,29 @@ def arxiv_date_filter(lookback_days: int) -> str:
     )
 
 
+# These are useful for scoring in context but too broad as standalone arXiv clauses.
+ARXIV_BROAD_TERMS = {
+    "electric field", "field-effect", "iii v", "iii-v", "janus", "light emitting",
+    "nonlinear optical", "optoelectronic", "photodetector", "photoluminescence",
+    "photonic", "pl", "raman", "reflectance", "semiconductor", "tmd",
+    "voltage-induced", "wal",
+}
+ARXIV_PRIORITY_TERMS = ("sns", "tin monosulfide", "tin(ii) sulfide", "snse", "crsbr", "magnon")
+
+
 def arxiv_query(terms: dict[str, float], lookback_days: int | None = None) -> str:
     configured = os.environ.get("PAPER_WATCH_ARXIV_QUERY", "").strip()
     if configured:
         base_query = configured
     else:
-        core_terms = sorted(terms, key=terms.get, reverse=True)[:18]
+        ranked_terms = sorted(terms, key=terms.get, reverse=True)
+        if not os.environ.get("PAPER_WATCH_TERMS", "").strip():
+            ranked_terms = [
+                *ARXIV_PRIORITY_TERMS,
+                *(term for term in ranked_terms if term not in ARXIV_BROAD_TERMS),
+            ]
+        limit = max(1, env_int("PAPER_WATCH_ARXIV_TERM_LIMIT", 60))
+        core_terms = list(dict.fromkeys(ranked_terms))[:limit]
         base_query = " OR ".join(f'all:"{term}"' for term in core_terms)
 
     if lookback_days and env_bool("PAPER_WATCH_ARXIV_DATE_FILTER", True):
@@ -1053,51 +1072,61 @@ def profile_label(terms: dict[str, float], limit: int = 10) -> str:
 
 
 def fetch_arxiv_entries(query: str, max_results: int) -> list[dict]:
-    params = {
-        "search_query": query,
-        "start": 0,
-        "max_results": max_results,
-        "sortBy": "submittedDate",
-        "sortOrder": "descending",
-    }
-    url = f"{ARXIV_API_URL}?{urllib.parse.urlencode(params)}"
-    req = urllib.request.Request(url, headers={"User-Agent": "kohdalab-paperbot/0.1"})
-    with urllib.request.urlopen(req, timeout=60) as res:
-        body = res.read()
-
-    root = ET.fromstring(body)
-    total_text = root.findtext("opensearch:totalResults", default="", namespaces=OPENSEARCH_NS)
+    if max_results <= 0:
+        return []
+    page_size = min(max_results, 1000)
+    max_pages = max(1, min(30, env_int("PAPER_WATCH_ARXIV_MAX_PAGES", 10)))
     entries = []
-    for entry in root.findall("atom:entry", ATOM_NS):
-        url_text = entry.findtext("atom:id", default="", namespaces=ATOM_NS)
-        authors = [
-            compact_whitespace(author.findtext("atom:name", default="", namespaces=ATOM_NS))
-            for author in entry.findall("atom:author", ATOM_NS)
-        ]
-        authors = [author for author in authors if author]
-        entries.append(
-            {
-                "source": "arxiv",
-                "source_detail": "arxiv",
-                "journal": "arXiv",
-                "external_id": normalize_arxiv_id(url_text),
-                "title": compact_whitespace(entry.findtext("atom:title", default="", namespaces=ATOM_NS)),
-                "authors": authors,
-                "summary": compact_whitespace(entry.findtext("atom:summary", default="", namespaces=ATOM_NS)),
-                "url": url_text,
-                "published_at": parse_datetime(entry.findtext("atom:published", default="", namespaces=ATOM_NS)),
-                "updated_at": parse_datetime(entry.findtext("atom:updated", default="", namespaces=ATOM_NS)),
-            }
-        )
-    if source_stats_enabled():
-        total = int(total_text) if total_text.isdigit() else 0
-        print(f"arXiv query: total={total_text or 'unknown'} fetched={len(entries)} max_results={max_results}")
-        if total and total >= max_results:
-            print(
-                "arXiv query reached max_results; consider increasing "
-                "PAPER_WATCH_MAX_RESULTS or narrowing PAPER_WATCH_ARXIV_QUERY.",
-                file=sys.stderr,
+    total = None
+    start = 0
+    for page_number in range(max_pages):
+        if page_number:
+            time.sleep(3)
+        params = {
+            "search_query": query,
+            "start": start,
+            "max_results": page_size,
+            "sortBy": "submittedDate",
+            "sortOrder": "descending",
+        }
+        url = f"{ARXIV_API_URL}?{urllib.parse.urlencode(params)}"
+        req = urllib.request.Request(url, headers={"User-Agent": "kohdalab-paperbot/0.1"})
+        with urllib.request.urlopen(req, timeout=60) as res:
+            root = ET.fromstring(res.read())
+        total_text = root.findtext("opensearch:totalResults", default="", namespaces=OPENSEARCH_NS)
+        if total_text.isdigit():
+            total = int(total_text)
+        page = root.findall("atom:entry", ATOM_NS)
+        for entry in page:
+            url_text = entry.findtext("atom:id", default="", namespaces=ATOM_NS)
+            authors = [
+                compact_whitespace(author.findtext("atom:name", default="", namespaces=ATOM_NS))
+                for author in entry.findall("atom:author", ATOM_NS)
+            ]
+            authors = [author for author in authors if author]
+            entries.append(
+                {
+                    "source": "arxiv",
+                    "source_detail": "arxiv",
+                    "journal": "arXiv",
+                    "external_id": normalize_arxiv_id(url_text),
+                    "title": compact_whitespace(entry.findtext("atom:title", default="", namespaces=ATOM_NS)),
+                    "authors": authors,
+                    "summary": compact_whitespace(entry.findtext("atom:summary", default="", namespaces=ATOM_NS)),
+                    "url": url_text,
+                    "published_at": parse_datetime(entry.findtext("atom:published", default="", namespaces=ATOM_NS)),
+                    "updated_at": parse_datetime(entry.findtext("atom:updated", default="", namespaces=ATOM_NS)),
+                }
             )
+        start += len(page)
+        if not page or (total is not None and start >= total):
+            break
+        if total is None and len(page) < page_size:
+            break
+    if source_stats_enabled():
+        print(f"arXiv query: total={total if total is not None else 'unknown'} fetched={len(entries)} max_results={max_results}")
+    if total is not None and len(entries) < total:
+        print("arXiv query incomplete; check the API response or PAPER_WATCH_ARXIV_MAX_PAGES.", file=sys.stderr)
     return entries
 
 
@@ -1318,7 +1347,7 @@ def fetch_rss_entries(feeds: list[dict], *, max_items_per_feed: int) -> list[dic
             else:
                 print(f"RSS feed failed: {feed['id']} HTTP {exc.code}.", file=sys.stderr)
             continue
-        except (urllib.error.URLError, TimeoutError, OSError, ET.ParseError) as exc:
+        except (urllib.error.URLError, TimeoutError, OSError, ET.ParseError, ValueError) as exc:
             print(f"RSS feed failed: {feed['id']} {exc}", file=sys.stderr)
             continue
 
@@ -1624,6 +1653,7 @@ def unit_vector(vector: list[float]) -> tuple[float, ...]:
 
 
 def unit_dot(a: tuple[float, ...], b: tuple[float, ...]) -> float:
+    require_matching_dimensions(a, b)
     return sum(x * y for x, y in zip(a, b))
 
 
@@ -1944,6 +1974,7 @@ def apply_rag_scores(
     fixed_rag_floor = env_float("PAPER_WATCH_RAG_FLOOR", 0.75)
     fixed_rag_ceiling = env_float("PAPER_WATCH_RAG_CEILING", 0.90)
     model = paper_watch_embed_model()
+    require_index_model(conn, model)
     terms = profile_terms()
 
     eligible_entries = [
@@ -2088,12 +2119,22 @@ def upsert_entry(conn: sqlite3.Connection, entry: dict) -> bool:
     now = utc_now()
     existing = conn.execute(
         """
-        SELECT posted_at
+        SELECT posted_at, title, summary, score, rag_score, rag_source,
+               rag_page_start, rag_page_end, reasons_json, term_score
         FROM paper_watch_items
         WHERE source = ? AND external_id = ?
         """,
         (entry["source"], entry["external_id"]),
     ).fetchone()
+    score = entry["score"]
+    reasons_json = json.dumps(entry["reasons"], ensure_ascii=False)
+    term_score = entry.get("term_score", score)
+    rag_score = entry.get("rag_score", 0.0)
+    rag_source = entry.get("rag_source") or None
+    rag_page_start = entry.get("rag_page_start")
+    rag_page_end = entry.get("rag_page_end")
+    if existing and not rag_source and existing[5] and existing[1:3] == (entry["title"], entry["summary"]):
+        score, rag_score, rag_source, rag_page_start, rag_page_end, reasons_json, term_score = existing[3:]
     conn.execute(
         """
         INSERT INTO paper_watch_items (
@@ -2139,13 +2180,13 @@ def upsert_entry(conn: sqlite3.Connection, entry: dict) -> bool:
             entry["url"],
             entry["published_at"].strftime("%Y-%m-%dT%H:%M:%SZ"),
             entry["updated_at"].strftime("%Y-%m-%dT%H:%M:%SZ"),
-            entry["score"],
-            json.dumps(entry["reasons"], ensure_ascii=False),
-            entry.get("term_score", entry["score"]),
-            entry.get("rag_score", 0.0),
-            entry.get("rag_source") or None,
-            entry.get("rag_page_start"),
-            entry.get("rag_page_end"),
+            score,
+            reasons_json,
+            term_score,
+            rag_score,
+            rag_source,
+            rag_page_start,
+            rag_page_end,
             entry.get("doi") or None,
             entry.get("dedupe_key") or entry_dedupe_key(entry),
             entry.get("title_key") or entry_title_key(entry),
@@ -2205,7 +2246,7 @@ def select_candidates(
               SELECT 1
               FROM paper_watch_items AS posted
               WHERE posted.posted_at IS NOT NULL
-                AND posted.title_key IS NOT NULL
+                AND posted.title_key != ''
                 AND posted.title_key = candidate.title_key
           )
         ORDER BY score DESC, published_at DESC
@@ -2571,7 +2612,7 @@ def select_rag_enrichment_candidates(
         WHERE posted_at IS NULL
           AND first_seen_at >= ?
           AND term_score >= ?
-          AND (rag_score IS NULL OR rag_score <= 0)
+          AND COALESCE(rag_source, '') = ''
         ORDER BY term_score DESC, first_seen_at DESC, published_at DESC
         LIMIT ?
         """,
@@ -2583,7 +2624,7 @@ def select_rag_enrichment_candidates(
 def update_rag_scores(conn: sqlite3.Connection, items: list[dict]) -> int:
     updated = 0
     for item in items:
-        if float(item.get("rag_score", 0.0) or 0.0) <= 0:
+        if not item.get("rag_source"):
             continue
         conn.execute(
             """
@@ -2726,9 +2767,10 @@ def select_report_candidates(
     scope: str,
     selected_groups: set[str],
 ) -> list[dict]:
+    if limit <= 0:
+        return []
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     cutoff_text = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
-    fetch_limit = max(limit * 25, limit)
     metadata_by_source = load_lab_metadata_by_source()
     rows = conn.execute(
         """
@@ -2752,14 +2794,13 @@ def select_report_candidates(
               SELECT 1
               FROM paper_watch_items AS posted
               WHERE posted.posted_at IS NOT NULL
-                AND posted.title_key IS NOT NULL
+                AND posted.title_key != ''
                 AND posted.title_key = candidate.title_key
           )
         ORDER BY score DESC, first_seen_at DESC, published_at DESC
-        LIMIT ?
         """,
-        (min_score, cutoff_text, fetch_limit),
-    ).fetchall()
+        (min_score, cutoff_text),
+    )
 
     items = []
     seen_dedupe_keys = set()
@@ -3390,7 +3431,7 @@ def post_candidate_messages(
             f"{index}/{len(candidates)}: {truncate(item['title'], 90)}"
         )
         if not post_to_slack(payload["text"], blocks=payload.get("blocks")):
-            break
+            raise RuntimeError(f"Paper Watch Slack delivery failed after {posted}/{len(candidates)} posts.")
         mark_posted(conn, [item])
         conn.commit()
         posted += 1
@@ -3490,7 +3531,7 @@ def fetch_and_score_entries(args: argparse.Namespace, terms: dict[str, float]) -
         query = arxiv_query(terms, args.lookback_days)
         try:
             entries.extend(fetch_arxiv_entries(query, args.max_results))
-        except (urllib.error.URLError, TimeoutError, OSError, ET.ParseError) as exc:
+        except (urllib.error.URLError, TimeoutError, OSError, ET.ParseError, ValueError) as exc:
             print(f"arXiv fetch failed; continuing with other sources: {exc}", file=sys.stderr)
 
     if "crossref" in sources:
@@ -3715,7 +3756,7 @@ def report_mode(args: argparse.Namespace) -> None:
                     for index, payload in enumerate(payloads, start=1):
                         print(f"Paper Watch Slack post {index}/{len(payloads)}")
                         if not post_to_slack(payload["text"], blocks=payload.get("blocks")):
-                            break
+                            raise RuntimeError(f"Paper Watch Slack delivery failed after {posted}/{len(payloads)} posts.")
                         posted += 1
                 else:
                     posted = post_candidate_messages(conn, candidates, payloads)
@@ -3726,8 +3767,8 @@ def report_mode(args: argparse.Namespace) -> None:
         elif args.notify_empty:
             message = f"{label}: no stored matching papers found."
             print(message)
-            if not args.dry_run:
-                post_to_slack(message)
+            if not args.dry_run and not post_to_slack(message):
+                raise RuntimeError("Paper Watch Slack delivery failed for the empty report.")
         else:
             print(
                 "Paper Watch report: "
@@ -3777,8 +3818,8 @@ def run_mode(args: argparse.Namespace, terms: dict[str, float]) -> None:
         elif args.notify_empty:
             message = "Paper Watch / 新着論文紹介: no new matching papers found."
             print(message)
-            if not args.dry_run:
-                post_to_slack(message)
+            if not args.dry_run and not post_to_slack(message):
+                raise RuntimeError("Paper Watch Slack delivery failed for the empty report.")
         else:
             print(
                 "Paper Watch: "

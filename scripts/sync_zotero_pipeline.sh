@@ -23,17 +23,17 @@ build_runtime_image() {
     return 0
   fi
   step "Build runtime image"
-  compose build --quiet paperbot
+  compose build --quiet paperbot || return $?
   BUILT_RUNTIME_IMAGE=1
 }
 
 compose_run() {
-  build_runtime_image
+  build_runtime_image || return $?
   compose run $RUN_FLAGS "$@"
 }
 
 compose_run_t() {
-  build_runtime_image
+  build_runtime_image || return $?
   compose run $RUN_FLAGS_T "$@"
 }
 
@@ -44,7 +44,7 @@ step() {
 notify_failure() {
   status="$1"
   message="$2"
-  compose_run_t zotero python -m rag_poc.sync_notify failure \
+  compose run $RUN_FLAGS_T zotero python -m rag_poc.sync_notify failure \
     --exit-code "$status" \
     --message "$message" || true
 }
@@ -52,8 +52,9 @@ notify_failure() {
 run_or_notify() {
   if "$@"; then
     return 0
+  else
+    status="$?"
   fi
-  status="$?"
   notify_failure "$status" "Step failed: $*"
   exit "$status"
 }

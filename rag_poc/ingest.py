@@ -49,12 +49,12 @@ def file_sha256(path: Path) -> str:
 
 
 def extract_pages(path: Path) -> list[dict]:
-    doc = fitz.open(path)
     pages = []
-    for idx, page in enumerate(doc, start=1):
-        text = normalize_text(page.get_text("text"))
-        if text:
-            pages.append({"page": idx, "text": text})
+    with fitz.open(path) as doc:
+        for idx, page in enumerate(doc, start=1):
+            text = normalize_text(page.get_text("text"))
+            if text:
+                pages.append({"page": idx, "text": text})
     return pages
 
 
@@ -139,6 +139,23 @@ def iter_pdfs(source_prefix: str = "") -> list[Path]:
         and path.suffix.lower() == ".pdf"
         and source_name(path).startswith(source_prefix)
     )
+
+
+def filter_superseded_zotero_pdfs(
+    conn: sqlite3.Connection, pdfs: list[Path],
+) -> list[Path]:
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zotero_sync_state'"
+    ).fetchone() or not conn.execute("SELECT 1 FROM zotero_sync_state LIMIT 1").fetchone():
+        return pdfs
+    selected_paths = {
+        path for (path,) in conn.execute("SELECT pdf_path FROM papers WHERE pdf_path != ''")
+    }
+    return [
+        pdf for pdf in pdfs
+        if not re.fullmatch(r"zotero/[A-Z0-9]{8}_[A-Z0-9]{8}\.pdf", source_name(pdf))
+        or source_name(pdf) in selected_paths
+    ]
 
 
 def source_name(path: Path) -> str:
@@ -488,7 +505,7 @@ def main() -> None:
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
     pdfs = iter_pdfs(args.source_prefix)
-    if not pdfs:
+    if not pdfs and not INDEX_DB_PATH.exists():
         if args.source_prefix:
             print(f"No PDFs found for prefix {args.source_prefix!r} in: {PAPERS_DIR}")
         else:
@@ -499,15 +516,24 @@ def main() -> None:
     newly_indexed_sources = []
     unchanged_sources = []
     zero_text_sources = []
+    failed_sources = []
     duplicate_sources = []
     removed_sources = []
     seen_hashes: dict[str, str] = {}
-    current_sources = {source_name(pdf) for pdf in pdfs}
-    conn = init_index_db(INDEX_DB_PATH, rebuild=args.rebuild)
+    conn = init_index_db(INDEX_DB_PATH)
     try:
-        validate_embedding_model(conn, EMBED_MODEL, rebuild=args.rebuild)
+        pdfs = filter_superseded_zotero_pdfs(conn, pdfs)
+        current_sources = {source_name(pdf) for pdf in pdfs}
+        if args.rebuild and pdfs:
+            conn.execute("DELETE FROM chunks")
+            conn.execute("DELETE FROM pdf_documents")
+            conn.execute("DELETE FROM index_metadata")
+        if pdfs:
+            validate_embedding_model(conn, EMBED_MODEL, rebuild=args.rebuild)
         backfill_pdf_documents(conn)
         removed_sources = cleanup_removed_sources(conn, current_sources, args.source_prefix)
+        if not args.rebuild:
+            conn.commit()
         existing_docs = load_pdf_documents(conn)
         primary_source_by_hash = load_primary_source_by_hash(conn)
 
@@ -593,7 +619,16 @@ def main() -> None:
 
             conn.execute("DELETE FROM chunks WHERE source = ?", (source,))
 
-            pages = remove_references(extract_pages(pdf))
+            try:
+                pages = remove_references(extract_pages(pdf))
+            except (OSError, RuntimeError, ValueError) as exc:
+                print(f"PDF extraction failed for {source}: {exc}")
+                upsert_pdf_document(
+                    conn, source=source, sha256=pdf_hash, file_size=file_size,
+                    mtime_ns=mtime_ns, chunk_count=0, status="error", error=str(exc),
+                )
+                failed_sources.append(source)
+                continue
             chunks = chunk_pages(pages)
             print(f"  pages={len(pages)} chunks={len(chunks)}")
             if not chunks:
@@ -652,6 +687,8 @@ def main() -> None:
 
     report = {
         "found_pdfs": len(pdfs),
+        "failed_pdfs": len(failed_sources),
+        "failed_sources": failed_sources,
         "total_indexed_pdfs": total_indexed_pdfs,
         "newly_indexed_pdfs": len(newly_indexed_sources),
         "unchanged_pdfs": len(unchanged_sources),

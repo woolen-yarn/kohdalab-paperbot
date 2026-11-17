@@ -1,7 +1,7 @@
 # Local Model Evaluation
 
 PaperBot runs generation and embeddings with two OpenAI-compatible `llama.cpp`
-servers on Whale (RTX 4080 SUPER, 16 GB VRAM; 64 GB system RAM). The benchmark
+servers on an RTX PC (RTX 4080 SUPER, 16 GB VRAM; 64 GB system RAM). The benchmark
 uses paraphrased synthetic fixtures and no private paper text.
 
 ## 2026-08-26 generation result

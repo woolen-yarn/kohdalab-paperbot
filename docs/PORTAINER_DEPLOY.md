@@ -25,7 +25,7 @@ Do not paste Slack or Zotero tokens into the Portainer UI. Keep secrets in:
 
 ```bash
 cd /volume1/docker
-git clone git@github.com:woolen-yarn/kohdalab-paperbot.git paperbot
+git clone https://github.com/woolen-yarn/kohdalab-paperbot.git paperbot
 cd /volume1/docker/paperbot
 mkdir -p rag_poc/papers/zotero rag_poc/index logs
 cp .env.example .env

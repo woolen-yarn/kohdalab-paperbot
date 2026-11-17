@@ -32,6 +32,7 @@ flowchart LR
 Both llama.cpp servers must be reachable from DS920+:
 
 ```bash
+# Replace rtx-pc.example.invalid with your inference host.
 curl http://rtx-pc.example.invalid:8080/health
 curl http://rtx-pc.example.invalid:8081/health
 ```
@@ -39,8 +40,10 @@ curl http://rtx-pc.example.invalid:8081/health
 Install the supplied Windows startup task from an elevated PowerShell session:
 
 ```bash
-Copy-Item .\scripts\whale\*.ps1 C:\Users\example\models\paperbot\
-powershell -ExecutionPolicy Bypass -File C:\Users\example\models\paperbot\install_paperbot_llama.ps1
+New-Item -ItemType Directory -Force C:\ProgramData\PaperBot\bin
+Copy-Item .\scripts\whale\*.ps1 C:\ProgramData\PaperBot\
+# Place llama-server.exe and required runtime DLLs in C:\ProgramData\PaperBot\bin.
+powershell -ExecutionPolicy Bypass -File C:\ProgramData\PaperBot\install_paperbot_llama.ps1
 ```
 
 ## 2. NAS Repository
@@ -55,7 +58,7 @@ Initial setup:
 
 ```bash
 cd /volume1/docker
-git clone git@github.com:woolen-yarn/kohdalab-paperbot.git paperbot
+git clone https://github.com/woolen-yarn/kohdalab-paperbot.git paperbot
 cd /volume1/docker/paperbot
 mkdir -p rag_poc/papers/zotero rag_poc/index logs
 cp .env.example .env
@@ -333,7 +336,7 @@ Check the Qwen3 embedding process and its logs on the RTX PC:
 
 ```powershell
 Get-ScheduledTask -TaskName "PaperBot llama.cpp"
-Get-Content C:\Users\example\models\paperbot\logs\embedding.stderr.log -Tail 100
+Get-Content C:\ProgramData\PaperBot\logs\embedding.stderr.log -Tail 100
 ```
 
 After switching from Nomic to Qwen3 embeddings, run a full RAG re-index. Old

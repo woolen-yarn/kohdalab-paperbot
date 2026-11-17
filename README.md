@@ -122,7 +122,7 @@ make check
 
 ## Release
 
-The current stable release is [v1.0.0](https://github.com/woolen-yarn/kohdalab-paperbot/releases/tag/v1.0.0).
+The current stable release is [v1.1.0](https://github.com/woolen-yarn/kohdalab-paperbot/releases/tag/v1.1.0).
 
 ## License
 

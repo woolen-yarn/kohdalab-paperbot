@@ -2,7 +2,7 @@ import sys
 import json
 import urllib.request
 
-OLLAMA_URL = "http://rtx-pc.example.invalid:11434/api/generate"
+OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 MODEL = "qwen3:8b"
 
 prompt = sys.argv[1] if len(sys.argv) > 1 else "こんにちは"

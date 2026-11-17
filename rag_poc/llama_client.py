@@ -9,8 +9,8 @@ import urllib.request
 from pathlib import Path
 
 
-DEFAULT_CHAT_BASE_URL = "http://rtx-pc.example.invalid:8080/v1"
-DEFAULT_EMBED_BASE_URL = "http://rtx-pc.example.invalid:8081/v1"
+DEFAULT_CHAT_BASE_URL = "http://127.0.0.1:8080/v1"
+DEFAULT_EMBED_BASE_URL = "http://127.0.0.1:8081/v1"
 DEFAULT_QUERY_INSTRUCTION = (
     "Instruct: Retrieve the scientific paper passage that best answers the research question.\n"
     "Query: "

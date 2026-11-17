@@ -5,7 +5,7 @@ import urllib.request
 from pathlib import Path
 
 
-DEFAULT_BASE_URL = "http://rtx-pc.example.invalid:11434"
+DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 
 
 def load_env_file(path: Path) -> None:
