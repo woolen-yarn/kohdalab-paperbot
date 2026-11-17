@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## v1.1.0 - 2026-11-17
+
+### Fixed
+
+- Reconcile removed Zotero papers and changed attachments during full synchronization.
+- Retry pending downloads and remove superseded PDFs from retrieval while preserving files.
+- Reject mismatched embedding models and vector dimensions.
+- Page through arXiv results and preserve completed Paper Watch enrichment on recollection.
+- Report failed deliveries and pipeline steps as failures while retaining successfully delivered entries.
 
 ### Changed
 

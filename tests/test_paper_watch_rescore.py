@@ -26,6 +26,63 @@ def watch_entry(external_id: str, title: str) -> dict:
 
 
 class PaperWatchRescoreTests(unittest.TestCase):
+    def test_zero_rag_score_survives_collection_until_content_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            conn = paper_watch.init_db(Path(directory) / "paper_watch.sqlite3")
+            try:
+                entry = watch_entry("one", "Rashba control")
+                paper_watch.upsert_entry(conn, entry)
+                enriched = dict(entry, rag_source="reference.pdf", score=12.0)
+                self.assertEqual(paper_watch.update_rag_scores(conn, [enriched]), 1)
+                paper_watch.upsert_entry(conn, entry)
+                saved = conn.execute(
+                    "SELECT score, rag_score, rag_source FROM paper_watch_items"
+                ).fetchone()
+                self.assertEqual(saved, (12.0, 0.0, "reference.pdf"))
+                self.assertEqual(paper_watch.select_rag_enrichment_candidates(conn, lookback_days=7), [])
+
+                paper_watch.upsert_entry(conn, dict(entry, summary="Revised abstract"))
+                pending = paper_watch.select_rag_enrichment_candidates(conn, lookback_days=7)
+                self.assertEqual([item["external_id"] for item in pending], ["one"])
+            finally:
+                conn.close()
+
+    def test_empty_title_keys_do_not_match_previously_posted_papers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            conn = paper_watch.init_db(Path(directory) / "paper_watch.sqlite3")
+            try:
+                posted = watch_entry("old", "半導体")
+                candidate = watch_entry("new", "光物性")
+                paper_watch.upsert_entry(conn, posted)
+                paper_watch.mark_posted(conn, [posted])
+                paper_watch.upsert_entry(conn, candidate)
+                items = paper_watch.select_report_candidates(
+                    conn, min_score=0, limit=5, lookback_days=7,
+                    scope="all", selected_groups=set(),
+                )
+            finally:
+                conn.close()
+        self.assertEqual([item["external_id"] for item in items], ["new"])
+
+    def test_arxiv_report_searches_beyond_higher_scored_journal_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            conn = paper_watch.init_db(Path(directory) / "paper_watch.sqlite3")
+            try:
+                for number in range(26):
+                    entry = watch_entry(str(number), f"Journal paper {number}")
+                    paper_watch.upsert_entry(conn, dict(entry, score=80, source="rss"))
+                arxiv = watch_entry("preprint", "Relevant preprint")
+                paper_watch.upsert_entry(conn, dict(arxiv, score=50, source="arxiv"))
+
+                items = paper_watch.select_report_candidates(
+                    conn, min_score=45, limit=1, lookback_days=7,
+                    scope="arxiv", selected_groups=set(),
+                )
+            finally:
+                conn.close()
+
+        self.assertEqual([item["external_id"] for item in items], ["preprint"])
+
     def test_strict_rescore_requires_reference_chunks(self):
         with sqlite3.connect(":memory:") as conn:
             with self.assertRaisesRegex(RuntimeError, "requires indexed PDF chunks"):

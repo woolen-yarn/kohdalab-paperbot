@@ -148,7 +148,9 @@ def library_version(headers: dict) -> int:
         return 0
 
 
-def fetch_top_items(limit: int | None, since: int | None = None) -> tuple[list[dict], int]:
+def fetch_top_items(
+    limit: int | None, since: int | None = None, *, attachments: bool = False,
+) -> tuple[list[dict], int]:
     items = []
     start = 0
     total = None
@@ -163,7 +165,7 @@ def fetch_top_items(limit: int | None, since: int | None = None) -> tuple[list[d
             batch_limit = min(batch_limit, remaining)
 
         data, headers = zotero_get(
-            f"{library_base_path()}/items/top",
+            f"{library_base_path()}/items" + ("" if attachments else "/top"),
             {
                 "format": "json",
                 "include": "data",
@@ -172,12 +174,22 @@ def fetch_top_items(limit: int | None, since: int | None = None) -> tuple[list[d
                 "start": start,
                 "limit": batch_limit,
                 **({"since": since} if since else {}),
+                "includeTrashed": 1,
+                **({"itemType": "attachment"} if attachments else {}),
             },
         )
-        latest_version = max(latest_version, library_version(headers))
+        version = library_version(headers)
+        if limit is None and since is None and not attachments:
+            if not version or (latest_version and latest_version != version):
+                raise ZoteroError("Full library snapshot changed or lacks a version. Retry the sync.")
+        latest_version = min(latest_version, version) if latest_version and version else latest_version or version
         if total is None:
             total = total_results(headers)
+        if limit is None and since is None and not attachments and total is None:
+            raise ZoteroError("Full library snapshot lacks a total item count.")
 
+        if not isinstance(data, list):
+            raise ZoteroError("Unexpected Zotero items response.")
         if not data:
             break
 
@@ -191,6 +203,12 @@ def fetch_top_items(limit: int | None, since: int | None = None) -> tuple[list[d
 
         time.sleep(0.2)
 
+    if limit is None and since is None and not attachments:
+        keys = {item.get("key") for item in items}
+        if not all(keys) or len(keys) != len(items):
+            raise ZoteroError("Full library snapshot contains missing or repeated item keys.")
+    if limit is None and total is not None and len(items) != total:
+        raise ZoteroError(f"Incomplete Zotero snapshot: received {len(items)} of {total} items.")
     return items, latest_version
 
 
@@ -264,18 +282,9 @@ def file_md5(path: Path) -> str:
     return digest.hexdigest()
 
 
-def attachment_mtime_seconds(mtime: str | int | None) -> float | None:
-    if not mtime:
-        return None
-    try:
-        return int(mtime) / 1000
-    except (TypeError, ValueError):
-        return None
-
-
 def is_pdf_attachment(item: dict) -> bool:
     data = item.get("data") or {}
-    if data.get("itemType") != "attachment":
+    if data.get("itemType") != "attachment" or data.get("deleted"):
         return False
 
     content_type = (data.get("contentType") or "").lower()
@@ -304,7 +313,7 @@ def zotero_pdf_path(paper_key: str, attachment_key: str) -> Path:
 def normalize_item(item: dict) -> dict | None:
     data = item.get("data") or {}
     item_type = data.get("itemType", "")
-    if item_type in SKIPPED_ITEM_TYPES:
+    if item_type in SKIPPED_ITEM_TYPES or data.get("deleted"):
         return None
 
     creators = data.get("creators") or []
@@ -463,6 +472,10 @@ def delete_papers(conn: sqlite3.Connection, zotero_keys: set[str]) -> int:
     )
     conn.executemany(
         "DELETE FROM zotero_attachments WHERE parent_key = ?",
+        [(key,) for key in zotero_keys],
+    )
+    conn.executemany(
+        "DELETE FROM zotero_attachments WHERE attachment_key = ?",
         [(key,) for key in zotero_keys],
     )
     return len(zotero_keys)
@@ -771,13 +784,16 @@ def should_skip_pdf(path: Path, remote_md5: str, force: bool) -> bool:
     return file_md5(path) == remote_md5.lower()
 
 
-def download_attachment_file(attachment_key: str, dest: Path) -> tuple[str, dict]:
+def download_attachment_file(attachment_key: str, dest: Path, remote_md5: str = "") -> tuple[str, dict]:
     body, headers = zotero_get_file(f"{library_base_path()}/items/{attachment_key}/file")
+    digest = hashlib.md5(body).hexdigest()
+    if b"%PDF-" not in body[:1024] or (remote_md5 and digest != remote_md5):
+        raise ZoteroError("Downloaded attachment is not a valid PDF or its checksum differs.")
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".tmp")
     tmp.write_bytes(body)
     tmp.replace(dest)
-    return file_md5(dest), headers
+    return digest, headers
 
 
 def is_known_pdf_state(
@@ -822,7 +838,6 @@ def sync_one_pdf(
             raise ZoteroError("PDF attachment has no key.")
 
         remote_md5 = (data.get("md5") or "").lower()
-        remote_mtime = attachment_mtime_seconds(data.get("mtime"))
         dest = zotero_pdf_path(paper_key, attachment_key)
         rel_path = dest.relative_to(PAPERS_DIR).as_posix()
 
@@ -836,7 +851,7 @@ def sync_one_pdf(
                 "error": "",
             }
 
-        if should_skip_pdf(dest, remote_md5, force):
+        if should_skip_pdf(dest, remote_md5, force or (not remote_md5 and paper.get("pdf_status") == "pending")):
             local_md5 = file_md5(dest) if dest.exists() else remote_md5
             return {
                 "status": "unchanged",
@@ -847,9 +862,7 @@ def sync_one_pdf(
                 "error": "",
             }
 
-        local_md5, _headers = download_attachment_file(attachment_key, dest)
-        if remote_mtime is not None:
-            os.utime(dest, (remote_mtime, remote_mtime))
+        local_md5, _headers = download_attachment_file(attachment_key, dest, remote_md5)
         return {
             "status": "downloaded",
             "paper_key": paper_key,
@@ -858,7 +871,7 @@ def sync_one_pdf(
             "md5": local_md5,
             "error": "",
         }
-    except (OSError, ZoteroError) as exc:
+    except (OSError, ZoteroError, ValueError) as exc:
         return {
             "status": "failed",
             "paper_key": paper_key,
@@ -915,7 +928,7 @@ def apply_pdf_result(conn: sqlite3.Connection, result: dict, *, dry_run: bool) -
             status="failed",
             error=result["error"],
         )
-        update_paper_pdf_status(conn, paper_key=paper_key, status="failed")
+        conn.execute("UPDATE papers SET pdf_status = 'failed' WHERE zotero_key = ?", (paper_key,))
 
 
 def download_unique_pdfs(
@@ -1083,17 +1096,78 @@ def main() -> None:
         limit = args.limit
         items, latest_version = fetch_top_items(limit, since=since)
         papers = [paper for item in items if (paper := normalize_item(item))]
-        latest_version = max(latest_version, *(paper["version"] for paper in papers), 0)
     except ZoteroError as exc:
         if conn is not None:
             conn.close()
         raise SystemExit(f"Zotero sync failed: {exc}") from exc
 
     try:
-        deleted_keys: set[str] = set()
+        deleted_keys = {
+            item["key"] for item in items
+            if item.get("key") and (item.get("data") or {}).get("deleted")
+        }
+        changed_pdf_parents: set[str] = set()
         if incremental:
-            deleted_keys, deleted_version = fetch_deleted_items(previous_version)
-            latest_version = max(latest_version, deleted_version)
+            attachments, attachment_version = fetch_top_items(None, since=since, attachments=True)
+            remote_deleted, deleted_version = fetch_deleted_items(previous_version)
+            deleted_keys.update(remote_deleted)
+            latest_version = min(latest_version, attachment_version, deleted_version)
+            changed_pdf_parents = {
+                parent
+                for item in attachments
+                if (parent := (item.get("data") or {}).get("parentItem"))
+            }
+            changed_attachment_keys = deleted_keys | {
+                item["key"] for item in attachments if item.get("key")
+            }
+            removed_pdf_keys = deleted_keys | {
+                item["key"] for item in attachments
+                if item.get("key") and (item.get("data") or {}).get("deleted")
+            }
+            changed_pdf_parents.update(
+                parent for key, parent in conn.execute(
+                    """
+                SELECT attachment_key, parent_key FROM zotero_attachments
+                UNION SELECT pdf_attachment_key, zotero_key FROM papers
+                """
+                ) if key in changed_attachment_keys
+            )
+            conn.executemany("""
+                UPDATE papers SET pdf_path = '', pdf_attachment_key = '', pdf_md5 = ''
+                WHERE pdf_attachment_key = ?
+            """, [(key,) for key in removed_pdf_keys])
+        elif args.limit is None:
+            active_keys = {paper["zotero_key"] for paper in papers}
+            deleted_keys.update(
+                key for (key,) in conn.execute("SELECT zotero_key FROM papers")
+                if key not in active_keys
+            )
+            changed_pdf_parents.update(active_keys)
+
+        deleted_count = delete_papers(conn, deleted_keys)
+        if deleted_count:
+            print(f"Deleted Zotero items removed from DB: {deleted_count}")
+
+        # Keep one primary when a deletion removes the previous representative.
+        orphan_groups = conn.execute("""
+            SELECT DISTINCT dedupe_key FROM papers AS duplicate
+            WHERE is_duplicate = 1 AND NOT EXISTS (
+                SELECT 1 FROM papers AS primary_paper
+                WHERE primary_paper.zotero_key = duplicate.duplicate_of
+            )
+        """).fetchall()
+        for (dedupe_key,) in orphan_groups:
+            (primary_key,) = conn.execute("""
+                SELECT zotero_key FROM papers WHERE dedupe_key = ?
+                ORDER BY is_duplicate, date_added, zotero_key LIMIT 1
+            """, (dedupe_key,)).fetchone()
+            conn.execute("""
+                UPDATE papers
+                SET is_duplicate = zotero_key != ?,
+                    duplicate_of = CASE WHEN zotero_key = ? THEN '' ELSE ? END
+                WHERE dedupe_key = ?
+            """, (primary_key, primary_key, primary_key, dedupe_key))
+            changed_pdf_parents.add(primary_key)
 
         duplicates = assign_duplicates(papers, load_primary_by_dedupe_key(conn))
         skipped = len(items) - len(papers)
@@ -1114,9 +1188,10 @@ def main() -> None:
         for paper in papers:
             upsert_paper(conn, paper)
 
-        deleted_count = delete_papers(conn, deleted_keys)
-        if deleted_count:
-            print(f"Deleted Zotero items removed from DB: {deleted_count}")
+        conn.executemany(
+            "UPDATE papers SET pdf_status = 'pending' WHERE zotero_key = ?",
+            [(key,) for key in changed_pdf_parents],
+        )
 
         if args.download_pdfs:
             if args.refresh_pdf_metadata or args.force_pdf_download:
@@ -1124,6 +1199,17 @@ def main() -> None:
             else:
                 pdf_candidates = unique_papers
             attach_existing_pdf_state(conn, pdf_candidates)
+            if not (args.refresh_pdf_metadata or args.force_pdf_download):
+                changed_keys = {paper["zotero_key"] for paper in pdf_candidates}
+                for paper in pdf_candidates:
+                    if paper.get("pdf_status") == "no_pdf":
+                        paper["pdf_status"] = ""
+                if args.limit is None:
+                    pdf_candidates = pdf_candidates + [
+                        paper
+                        for paper in load_unique_pdf_candidates(conn)
+                        if paper["pdf_status"] in {"", "failed", "pending"} and paper["zotero_key"] not in changed_keys
+                    ]
             pdf_report = download_unique_pdfs(
                 conn,
                 pdf_candidates,
@@ -1154,6 +1240,8 @@ def main() -> None:
             }
         )
         conn.commit()
+    except ZoteroError as exc:
+        raise SystemExit(f"Zotero sync failed: {exc}") from exc
     finally:
         if conn is not None:
             conn.close()

@@ -40,5 +40,8 @@ test:
 	uv run python -m unittest discover -v
 
 check:
-	uv run python -m py_compile bot.py rag_poc/ask.py rag_poc/ingest.py rag_poc/lab_profile.py rag_poc/llama_client.py rag_poc/ollama_client.py rag_poc/paper_watch.py rag_poc/sync_notify.py rag_poc/zotero_sync.py scripts/benchmark_ollama_models.py scripts/evaluate_generation_models.py scripts/evaluate_llamacpp_models.py scripts/evaluate_embedding_models.py scripts/cleanup_slack_channel.py
+	uv run python -m py_compile *.py rag_poc/*.py scripts/*.py tests/*.py
+	@set -e; for script in scripts/*.sh; do \
+		case "$$script" in */run_paper_watch.sh) bash -n "$$script" ;; *) sh -n "$$script" ;; esac; \
+	done
 	uv run python -m unittest discover -v
