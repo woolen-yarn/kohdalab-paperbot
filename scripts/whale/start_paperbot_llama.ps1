@@ -1,7 +1,7 @@
 param(
-    [string]$ModelRoot = "C:\Users\example\models\paperbot",
+    [string]$ModelRoot = "C:\ProgramData\PaperBot",
     [string]$GenerationModel = "gemma-4-26B-A4B-it-IQ4_XS.gguf",
-    [string]$ServerPath = "C:\Users\example\AppData\Local\Microsoft\WinGet\Packages\ggml.llamacpp_Microsoft.Winget.Source_8wekyb3d8bbwe\llama-server.exe"
+    [string]$ServerPath = "C:\ProgramData\PaperBot\bin\llama-server.exe"
 )
 
 $ErrorActionPreference = "Stop"

@@ -27,7 +27,7 @@ from rag_poc.paper_watch import (
 )
 
 
-DEFAULT_BASE_URL = "http://rtx-pc.example.invalid:11434"
+DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 
 
 @dataclass

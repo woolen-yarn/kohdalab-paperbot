@@ -260,8 +260,8 @@ def llama_endpoint_status(base_url: str) -> str:
 
 
 def llama_status() -> str:
-    chat_url = os.environ.get("LLAMA_CHAT_BASE_URL", "http://rtx-pc.example.invalid:8080/v1")
-    embed_url = os.environ.get("LLAMA_EMBED_BASE_URL", "http://rtx-pc.example.invalid:8081/v1")
+    chat_url = os.environ.get("LLAMA_CHAT_BASE_URL", "http://127.0.0.1:8080/v1")
+    embed_url = os.environ.get("LLAMA_EMBED_BASE_URL", "http://127.0.0.1:8081/v1")
     return (
         f"chat={llama_endpoint_status(chat_url)} `{CHAT_MODEL}` / "
         f"embed={llama_endpoint_status(embed_url)} `{EMBED_MODEL}`"

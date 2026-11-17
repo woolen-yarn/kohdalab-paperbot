@@ -8,7 +8,7 @@ import urllib.request
 from pathlib import Path
 
 
-DEFAULT_BASE_URL = "http://rtx-pc.example.invalid:11434"
+DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 DEFAULT_PROMPT = (
     "Persistent Spin Helixを日本語で3文で説明してください。"
     "Rashba, Dresselhaus, SU(2), spin-orbit interactionは英語表記のまま使ってください。"

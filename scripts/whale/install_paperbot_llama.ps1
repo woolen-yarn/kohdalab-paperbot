@@ -1,5 +1,5 @@
 param(
-    [string]$InstallRoot = "C:\Users\example\models\paperbot"
+    [string]$InstallRoot = "C:\ProgramData\PaperBot"
 )
 
 $ErrorActionPreference = "Stop"

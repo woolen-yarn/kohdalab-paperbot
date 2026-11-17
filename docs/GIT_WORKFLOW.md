@@ -6,17 +6,7 @@ The production repository lives on the DS920+ at:
 /volume1/docker/paperbot
 ```
 
-The main private remote is:
-
-```text
-origin  git@github.com:woolen-yarn/kohdalab-paperbot.git
-```
-
-An optional public mirror can be kept as:
-
-```text
-personal  git@github.com:woolen-yarn/kohdalab-paperbot.git
-```
+Clone the public repository from GitHub.
 
 Only source code and documentation are committed. Runtime files stay local:
 
@@ -58,64 +48,16 @@ make check
 git add README.md docs rag_poc scripts bot.py pyproject.toml
 git commit -m "Describe the change"
 git push -u origin codex/describe-change
-git push -u personal codex/describe-change
 ```
 
-Open pull requests from the same branch to `master` in both repositories. Do
-not push feature or release changes directly to `master`.
-
-After both release PRs are reviewed and merged, tag the shared reviewed branch
-head so the same tag identifies the same source commit in both repositories:
-
-```bash
-git switch codex/prepare-v1-release
-make check
-git tag -a v1.0.0 -m "KohdaLab PaperBot v1.0.0"
-git push origin v1.0.0
-git push personal v1.0.0
-```
-
-## Deploy Key
-
-The DS920+ uses a read-only GitHub deploy key for the private KohdaLab
-repository. The key is registered in:
-
-```text
-woolen-yarn/kohdalab-paperbot
-Settings > Deploy keys
-```
-
-`~/.ssh/config` on DS920+ should contain a host alias:
-
-```text
-Host github.com
-  HostName github.com
-  User git
-  IdentityFile ~/.ssh/id_ed25519
-  IdentitiesOnly yes
-```
-
-Test:
-
-```bash
-ssh -T github.com
-```
+Open a pull request to `master` and wait for CI and review.
 
 ## Release Checklist
 
-1. Set the version in `pyproject.toml` and replace `Unreleased` in
-   `CHANGELOG.md` with the release date.
-2. Run `make check` and the NAS Docker Compose smoke check.
-3. Commit the release candidate and push the same branch to `origin` and
-   `personal`.
-4. Open PRs to `master` in both repositories and wait for CI/review.
-5. Merge both PRs and verify their source trees are identical.
-6. Create the annotated tag on the shared reviewed branch-head commit.
-7. Push the identical tag to both remotes.
-8. Create GitHub Releases for the private origin and public mirror.
-9. Pull `origin/master` on DS920+, rebuild, and verify Slack/RAG health.
-10. Dry-run and apply `--mode rescore --lookback-days 180`; retain its automatic
-    SQLite backup until the first scheduled reports are verified.
+1. Update the version in `pyproject.toml`, the lock file, and the changelog.
+2. Run `make check`.
+3. Verify that the release tree contains only public configuration examples, source, and documentation.
+4. Merge the reviewed pull request and create the GitHub release from the merge commit.
 
 ## Branch Policy
 
