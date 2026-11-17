@@ -127,3 +127,5 @@ The current stable release is [v1.1.0](https://github.com/woolen-yarn/kohdalab-p
 ## License
 
 [MIT License](LICENSE)
+
+[One-click distribution / ワンクリック配布](DISTRIBUTION.md)
